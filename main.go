@@ -70,7 +70,7 @@ func (g *Game) spawnCircle(screenWidth, screenHeight int) {
 	// Give it a random velocity, generally directed towards the screen.
 	angle := math.Atan2(float64(screenHeight/2)-y, float64(screenWidth/2)-x)
 	angle += (rand.Float64() - 0.5) * (math.Pi / 2) // Add some random deviation
-	speed := 0.5 + rand.Float64()*1.5 // Random speed between 0.5 and 2.0
+	speed := 0.5 + rand.Float64()*1.5               // Random speed between 0.5 and 2.0
 
 	g.circles = append(g.circles, &Circle{
 		x:        x,
@@ -139,23 +139,26 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
-	// Set window properties according to the requirements.
-	ebiten.SetWindowDecorated(false)      // No window border, title bar, etc.
-	ebiten.SetWindowFloating(true)        // Always on top.
-	ebiten.SetScreenTransparent(true)     // Transparent background.
-	ebiten.SetWindowMousePassthrough(true) // Clicks go through the window.
-
-	// For fullscreen, we get the monitor size and set the window to that size.
-	// Ebitengine's fullscreen mode can sometimes be exclusive, this is a more reliable way
-	// to create a borderless window that covers the whole screen.
-	screenWidth, screenHeight := ebiten.ScreenSizeInFullscreen()
-	ebiten.SetWindowSize(screenWidth, screenHeight)
-
+	// Set window properties.
+	ebiten.SetWindowDecorated(false)
+	ebiten.SetWindowFloating(true)
+	ebiten.SetWindowMousePassthrough(true)
 	ebiten.SetWindowTitle("Floating Circles")
+
+	// To enable transparency with a fullscreen-like window, we can't use true
+	// fullscreen mode. Instead, we create a window that is almost fullscreen.
+	// A 1-pixel difference is usually enough to keep the window composited by the OS.
+	screenWidth, screenHeight := ebiten.ScreenSizeInFullscreen()
+	ebiten.SetWindowSize(screenWidth, screenHeight-1)
 
 	game := NewGame()
 
-	if err := ebiten.RunGame(game); err != nil {
+	// As of Ebitengine v2.5, screen transparency is set via RunGameWithOptions.
+	opts := ebiten.RunGameOptions{
+		ScreenTransparent: true,
+	}
+
+	if err := ebiten.RunGameWithOptions(game, &opts); err != nil {
 		log.Fatal(err)
 	}
 }
