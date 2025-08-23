@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
@@ -115,6 +116,27 @@ func connectToMisskey(cfg *Config, reactionChan chan<- ReactionInfo) {
 	}
 }
 
+// --- Test Mode ---
+func runTestMode(reactionChan chan<- ReactionInfo) {
+	log.Println("--- RUNNING IN TEST MODE ---")
+	mockData := []ReactionInfo{
+		{Name: "👍"},
+		{Name: ":ebiten:", URL: "https://ebitengine.org/images/logo.png"}, // Valid custom emoji
+		{Name: "Go"}, // Standard text, will become a Twemoji
+		{Name: ":error:", URL: "https://example.com/nonexistent-image.png"}, // Invalid custom emoji to test fallback
+		{Name: "❤️"},
+	}
+
+	// Loop forever, sending mock data every 2 seconds
+	for {
+		for _, reaction := range mockData {
+			log.Printf("[TEST MODE] Spawning reaction: %s", reaction.Name)
+			reactionChan <- reaction
+			time.Sleep(2 * time.Second)
+		}
+	}
+}
+
 // --- Image Handling ---
 func fetchImage(url string) (*ebiten.Image, error) {
 	resp, err := http.Get(url)
@@ -142,11 +164,11 @@ func emojiToTwemojiURL(emoji string) string {
 
 // --- Ebitengine Game Loop ---
 type ReactionObject struct {
-	x, y, vx, vy   float64
-	lifetime       int
-	reactionName   string
-	image          *ebiten.Image
-	fallbackText   string
+	x, y, vx, vy float64
+	lifetime     int
+	reactionName string
+	image        *ebiten.Image
+	fallbackText string
 }
 
 type Game struct {
@@ -166,16 +188,20 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 	edge := rand.Intn(4)
 	padding := 36.0
 	switch edge {
-	case 0: x, y = rand.Float64()*float64(w), -padding
-	case 1: x, y = float64(w)+padding, rand.Float64()*float64(h)
-	case 2: x, y = rand.Float64()*float64(w), float64(h)+padding
-	case 3: x, y = -padding, rand.Float64()*float64(h)
+	case 0:
+		x, y = rand.Float64()*float64(w), -padding
+	case 1:
+		x, y = float64(w)+padding, rand.Float64()*float64(h)
+	case 2:
+		x, y = rand.Float64()*float64(w), float64(h)+padding
+	case 3:
+		x, y = -padding, rand.Float64()*float64(h)
 	}
 	angle := math.Atan2(float64(h/2)-y, float64(w/2)-x) + (rand.Float64()-0.5)*(math.Pi/2)
 	speed := 0.5 + rand.Float64()*1.5
 	obj := &ReactionObject{
 		x: x, y: y, vx: math.Cos(angle) * speed, vy: math.Sin(angle) * speed,
-		lifetime: minLifetime + rand.Intn(maxLifetime-minLifetime),
+		lifetime:     minLifetime + rand.Intn(maxLifetime-minLifetime),
 		reactionName: reaction.Name,
 	}
 	g.objects = append(g.objects, obj)
@@ -267,7 +293,6 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 
 // --- Main Function ---
 func init() {
-	// Load the Go standard font for fallback text using the v2/text API.
 	fontReader := bytes.NewReader(goregular.TTF)
 	s, err := text.NewGoTextFaceSource(fontReader)
 	if err != nil {
@@ -275,18 +300,28 @@ func init() {
 	}
 	fallbackFont = &text.GoTextFace{
 		Source: s,
-		Size:   20, // Font size for fallback text
+		Size:   20,
 	}
 }
 
 func main() {
+	testMode := flag.Bool("test", false, "Enable test mode with mock data.")
+	flag.Parse()
+
 	log.Println("Starting Misskey Reaction Visualizer...")
-	cfg, err := loadConfig()
-	if err != nil {
-		log.Fatalf("Configuration error: %v", err)
-	}
+
 	reactionChan := make(chan ReactionInfo, 32)
-	go connectToMisskey(cfg, reactionChan)
+
+	if *testMode {
+		go runTestMode(reactionChan)
+	} else {
+		cfg, err := loadConfig()
+		if err != nil {
+			log.Fatalf("Configuration error: %v", err)
+		}
+		go connectToMisskey(cfg, reactionChan)
+	}
+
 	ebiten.SetWindowDecorated(false)
 	ebiten.SetWindowFloating(true)
 	ebiten.SetWindowMousePassthrough(true)
