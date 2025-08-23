@@ -232,6 +232,7 @@ type ReactionObject struct {
 	currentFrame int
 	frameCounter int
 	fallbackText string
+	scale        float64
 }
 
 type Game struct {
@@ -249,7 +250,8 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 	}
 	var x, y float64
 	edge := rand.Intn(4)
-	padding := 36.0
+	scale := 0.5 + rand.Float64() // Random scale from 0.5 to 1.5
+	padding := 36.0 * scale
 	switch edge {
 	case 0:
 		x, y = rand.Float64()*float64(w), -padding
@@ -266,6 +268,7 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 		x: x, y: y, vx: math.Cos(angle) * speed, vy: math.Sin(angle) * speed,
 		lifetime:     minLifetime + rand.Intn(maxLifetime-minLifetime),
 		reactionName: reaction.Name,
+		scale:        scale,
 	}
 	g.objects = append(g.objects, obj)
 
@@ -335,7 +338,7 @@ func (g *Game) Update() error {
 			}
 		}
 
-		padding := 36.0
+		padding := 36.0 * o.scale
 		isOutside := o.x+padding < 0 || o.x-padding > float64(w) || o.y+padding < 0 || o.y-padding > float64(h)
 		if o.lifetime < 0 && isOutside {
 			continue
@@ -367,6 +370,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			op := &ebiten.DrawImageOptions{}
 			w, h := imgToDraw.Bounds().Dx(), imgToDraw.Bounds().Dy()
 			op.GeoM.Translate(-float64(w)/2, -float64(h)/2)
+			op.GeoM.Scale(o.scale, o.scale)
 			op.GeoM.Translate(o.x, o.y)
 			screen.DrawImage(imgToDraw, op)
 		} else if o.fallbackText != "" {
