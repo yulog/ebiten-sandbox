@@ -44,6 +44,8 @@ var (
 	imageCache   = make(map[string]any)
 	cacheMutex   = &sync.RWMutex{}
 	fallbackFont *text.GoTextFace
+	// Global config for API calls outside of the main connection loop
+	appConfig *Config
 )
 
 // --- Configuration ---
@@ -64,10 +66,11 @@ func loadConfig() (*Config, error) {
 	if cfg.MisskeyInstance == "" || cfg.MisskeyInstance == "your.misskey.instance.com" || cfg.AccessToken == "" || cfg.AccessToken == "YOUR_MISSKEY_ACCESS_TOKEN" {
 		return nil, fmt.Errorf("please update config.json")
 	}
+	appConfig = &cfg // Store loaded config globally
 	return &cfg, nil
 }
 
-// --- Misskey WebSocket Communication ---
+// --- Misskey WebSocket/API Communication ---
 type MisskeyStreamMessage struct {
 	Type string `json:"type"`
 	Body struct {
@@ -125,6 +128,44 @@ func connectToMisskey(cfg *Config, reactionChan chan<- ReactionInfo) {
 	}
 }
 
+// queryEmojiAPI fetches a custom emoji URL from the instance API.
+type EmojiAPIResponse struct {
+	URL string `json:"url"`
+}
+
+func queryEmojiAPI(emojiName string) (string, error) {
+	if appConfig == nil {
+		return "", fmt.Errorf("app config not loaded")
+	}
+	apiURL := fmt.Sprintf("https://%s/api/emoji", appConfig.MisskeyInstance)
+	payload := map[string]string{"name": emojiName}
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("emoji API returned status: %s", resp.Status)
+	}
+
+	var apiResp EmojiAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return "", err
+	}
+
+	if apiResp.URL == "" {
+		return "", fmt.Errorf("emoji '%s' not found via API", emojiName)
+	}
+
+	return apiResp.URL, nil
+}
+
 // --- Test Mode ---
 func runTestMode(reactionChan chan<- ReactionInfo) {
 	log.Println("--- RUNNING IN TEST MODE ---")
@@ -137,6 +178,7 @@ func runTestMode(reactionChan chan<- ReactionInfo) {
 		{Name: "❤️"},
 		{Name: ":ai_nomming:", URL: "https://proxy.misskeyusercontent.jp/image/media.misskeyusercontent.jp%2Fmisskey%2Ff6294900-f678-43cc-bc36-3ee5deeca4c2.gif?emoji=1"},
 		{Name: ":meowsurprised:", URL: "https://proxy.misskeyusercontent.jp/image/media.misskeyusercontent.jp%2Femoji%2FmeowSurprised.png?emoji=1"},
+		{Name: ":bug:"},
 	}
 
 	// Loop forever, sending mock data every 2 seconds
@@ -170,18 +212,14 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("bad status: %s", resp.Status)
 	}
-
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-
 	contentType := http.DetectContentType(data)
-
 	if strings.Contains(contentType, "gif") {
 		g, err := gif.DecodeAll(bytes.NewReader(data))
 		if err != nil {
@@ -197,7 +235,6 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 			frameCopy := image.NewRGBA(canvas.Bounds())
 			draw.Draw(frameCopy, frameCopy.Bounds(), canvas, image.Point{}, draw.Src)
 			frames = append(frames, ebiten.NewImageFromImage(frameCopy))
-
 			if g.Disposal[i] == gif.DisposalBackground {
 				draw.Draw(canvas, srcImg.Bounds(), image.Transparent, image.Point{}, draw.Src)
 			}
@@ -287,7 +324,18 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 
 		urlToFetch := reaction.URL
 		if urlToFetch == "" {
-			urlToFetch = emojiToTwemojiURL(reaction.Name)
+			if len(reaction.Name) > 2 && reaction.Name[0] == ':' && reaction.Name[len(reaction.Name)-1] == ':' {
+				var err error
+				emojiName := strings.Trim(reaction.Name, ":")
+				urlToFetch, err = queryEmojiAPI(emojiName)
+				if err != nil {
+					log.Printf("Failed to query API for emoji '%s': %v", emojiName, err)
+					obj.fallbackText = emojiName
+					return
+				}
+			} else {
+				urlToFetch = emojiToTwemojiURL(reaction.Name)
+			}
 		}
 
 		decoded, err := fetchAndDecodeImage(urlToFetch)
@@ -410,13 +458,13 @@ func main() {
 
 	reactionChan := make(chan ReactionInfo, 32)
 
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	if *testMode {
 		go runTestMode(reactionChan)
 	} else {
-		cfg, err := loadConfig()
-		if err != nil {
-			log.Fatalf("Configuration error: %v", err)
-		}
 		go connectToMisskey(cfg, reactionChan)
 	}
 
