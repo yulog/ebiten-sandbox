@@ -6,6 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hajimehoshi/ebiten/v2 v2.8.8
+	github.com/magefile/mage v1.15.0
 	golang.org/x/image v0.30.0
 )
 
