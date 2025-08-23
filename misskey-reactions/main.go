@@ -3,31 +3,33 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"image/color"
+	"image"
+	_ "image/png"
 	"log"
 	"math"
 	"math/rand"
+	"net/http"
 	"net/url"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/text/v2"
 )
 
 const (
 	maxObjects  = 100
 	minLifetime = 300
 	maxLifetime = 900
-	fontSize    = 32
-	textDPI     = 72
 )
 
 var (
-	// Use the v2 text.Face interface.
-	emojiFont text.Face
+	// imageCache stores downloaded emoji images to avoid re-downloading.
+	imageCache = make(map[string]*ebiten.Image)
+	cacheMutex = &sync.RWMutex{}
 )
 
 // --- Configuration ---
@@ -64,9 +66,17 @@ type MisskeyStreamMessage struct {
 type NotificationBody struct {
 	Type     string `json:"type"`
 	Reaction string `json:"reaction"`
+	Note     struct {
+		ReactionEmojis map[string]string `json:"reactionEmojis"`
+	} `json:"note"`
 }
 
-func connectToMisskey(cfg *Config, reactionChan chan<- string) {
+type ReactionInfo struct {
+	Name string // e.g. ":blobcat:" or "👍"
+	URL  string
+}
+
+func connectToMisskey(cfg *Config, reactionChan chan<- ReactionInfo) {
 	u := url.URL{Scheme: "wss", Host: cfg.MisskeyInstance, Path: "/streaming", RawQuery: "i=" + cfg.AccessToken}
 	log.Printf("Connecting to %s", u.String())
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
@@ -89,40 +99,66 @@ func connectToMisskey(cfg *Config, reactionChan chan<- string) {
 			return
 		}
 		if msg.Type == "channel" && msg.Body.Type == "notification" {
-			var notification NotificationBody
-			if err := json.Unmarshal(msg.Body.Body, &notification); err != nil {
-				continue
-			}
-			if notification.Type == "reaction" && notification.Reaction != "" {
-				reactionChan <- notification.Reaction
+			var n NotificationBody
+			if err := json.Unmarshal(msg.Body.Body, &n); err == nil && n.Type == "reaction" && n.Reaction != "" {
+				reaction := ReactionInfo{Name: n.Reaction}
+				// Check if it's a custom emoji with a URL
+				if url, ok := n.Note.ReactionEmojis[strings.Trim(n.Reaction, ":")]; ok {
+					reaction.URL = url
+				} // If not, it's a standard unicode emoji
+				reactionChan <- reaction
 			}
 		}
 	}
+}
+
+// --- Image Handling ---
+func fetchImage(url string) (*ebiten.Image, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	img, _, err := image.Decode(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return ebiten.NewImageFromImage(img), nil
+}
+
+func emojiToTwemojiURL(emoji string) string {
+	var codes []string
+	for _, r := range emoji {
+		codes = append(codes, fmt.Sprintf("%x", r))
+	}
+	// Use jsDelivr CDN for Twemoji
+	return fmt.Sprintf("https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/%s.png", strings.Join(codes, "-"))
 }
 
 // --- Ebitengine Game Loop ---
 type ReactionObject struct {
 	x, y, vx, vy float64
 	lifetime     int
-	emoji        string
+	reactionName string
+	image        *ebiten.Image
 }
 
 type Game struct {
 	objects      []*ReactionObject
-	reactionChan <-chan string
+	reactionChan <-chan ReactionInfo
 }
 
-func NewGame(rc <-chan string) *Game {
+func NewGame(rc <-chan ReactionInfo) *Game {
 	return &Game{reactionChan: rc}
 }
 
-func (g *Game) spawnReaction(reaction string, w, h int) {
+func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 	if len(g.objects) >= maxObjects {
 		return
 	}
 	var x, y float64
 	edge := rand.Intn(4)
-	padding := float64(fontSize)
+	padding := 36.0 // Half of image size (72x72)
 	switch edge {
 	case 0:
 		x, y = rand.Float64()*float64(w), -padding
@@ -137,10 +173,40 @@ func (g *Game) spawnReaction(reaction string, w, h int) {
 	speed := 0.5 + rand.Float64()*1.5
 	obj := &ReactionObject{
 		x: x, y: y, vx: math.Cos(angle) * speed, vy: math.Sin(angle) * speed,
-		lifetime: minLifetime + rand.Intn(maxLifetime-minLifetime),
-		emoji:    reaction,
+		lifetime:     minLifetime + rand.Intn(maxLifetime-minLifetime),
+		reactionName: reaction.Name,
 	}
 	g.objects = append(g.objects, obj)
+
+	// Start fetching the image in the background
+	go func() {
+		cacheMutex.RLock()
+		img, exists := imageCache[reaction.Name]
+		cacheMutex.RUnlock()
+
+		if exists {
+			obj.image = img
+			return
+		}
+
+		urlToFetch := reaction.URL
+		if urlToFetch == "" { // If it's a standard emoji
+			urlToFetch = emojiToTwemojiURL(reaction.Name)
+		}
+
+		newImg, err := fetchImage(urlToFetch)
+		if err != nil {
+			log.Printf("Failed to fetch image for %s from %s: %v", reaction.Name, urlToFetch, err)
+			// Optionally, remove the object if image fails
+			return
+		}
+
+		log.Printf("Successfully fetched image for %s", reaction.Name)
+		cacheMutex.Lock()
+		imageCache[reaction.Name] = newImg
+		cacheMutex.Unlock()
+		obj.image = newImg
+	}()
 }
 
 func (g *Game) Update() error {
@@ -156,7 +222,7 @@ func (g *Game) Update() error {
 		o.x += o.vx
 		o.y += o.vy
 		o.lifetime--
-		padding := float64(fontSize)
+		padding := 36.0
 		isOutside := o.x+padding < 0 || o.x-padding > float64(w) || o.y+padding < 0 || o.y-padding > float64(h)
 		if o.lifetime < 0 && isOutside {
 			continue
@@ -177,24 +243,14 @@ func (g *Game) Update() error {
 
 func (g *Game) Draw(screen *ebiten.Image) {
 	for _, o := range g.objects {
-		emojiToDraw := o.emoji
-		if len(o.emoji) > 2 && o.emoji[0] == ':' && o.emoji[len(o.emoji)-1] == ':' {
-			emojiToDraw = "💖"
+		if o.image != nil {
+			op := &ebiten.DrawImageOptions{}
+			// Center the image
+			w, h := o.image.Bounds().Dx(), o.image.Bounds().Dy()
+			op.GeoM.Translate(-float64(w)/2, -float64(h)/2)
+			op.GeoM.Translate(o.x, o.y)
+			screen.DrawImage(o.image, op)
 		}
-
-		// Use the v2 text API.
-		op := &text.DrawOptions{}
-		width, height := text.Measure(emojiToDraw, emojiFont, float64(fontSize))
-
-		// Calculate coordinates to center the text.
-		x := o.x - width/2
-		y := o.y - height/2
-		op.GeoM.Translate(x, y)
-
-		// For color fonts, the color multiplier should be white.
-		op.ColorM.ScaleWithColor(color.Black)
-
-		text.Draw(screen, emojiToDraw, emojiFont, op)
 	}
 }
 
@@ -203,30 +259,13 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 // --- Main Function ---
-func init() {
-	fontData, err := os.Open("NotoColorEmoji-Regular.ttf")
-	if err != nil {
-		log.Fatalf("Failed to read font file: %v. Please download NotoColorEmoji-Regular.ttf and place it in the project directory.", err)
-	}
-
-	src, err := text.NewGoTextFaceSource(fontData)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	emojiFont = &text.GoTextFace{
-		Source: src,
-		Size:   fontSize,
-	}
-}
-
 func main() {
 	log.Println("Starting Misskey Reaction Visualizer...")
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
-	reactionChan := make(chan string, 32)
+	reactionChan := make(chan ReactionInfo, 32)
 	go connectToMisskey(cfg, reactionChan)
 	ebiten.SetWindowDecorated(false)
 	ebiten.SetWindowFloating(true)
