@@ -33,6 +33,10 @@ import (
 	"golang.org/x/image/font/gofont/goregular"
 )
 
+const version = "0.0.1"
+
+var revision = "HEAD"
+
 const (
 	maxObjects  = 100
 	minLifetime = 300
