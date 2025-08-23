@@ -1,157 +1,177 @@
 package main
 
 import (
-	"image/color"
+	"encoding/json"
+	"fmt"
 	"log"
-	"math"
-	"math/rand"
+	"net/url"
+	"os"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
-const (
-	// maxCircles is the maximum number of circles on screen.
-	maxCircles = 50
-	// minLifetime and maxLifetime define the random range of a circle's life in ticks (60 ticks = 1 second).
-	minLifetime = 300 // 5 seconds
-	maxLifetime = 900 // 15 seconds
-)
+// --- Configuration ---
 
-// Circle represents a single circle object.
-type Circle struct {
-	x, y     float64 // Position
-	vx, vy   float64 // Velocity
-	radius   float64
-	lifetime int
+// Config stores application configuration.
+type Config struct {
+	MisskeyInstance string `json:"misskey_instance"`
+	AccessToken     string `json:"access_token"`
+}
+
+// loadConfig reads and validates the configuration file.
+func loadConfig() (*Config, error) {
+	data, err := os.ReadFile("config.json")
+	if err != nil {
+		return nil, fmt.Errorf("cannot read config.json: %w", err)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("invalid format in config.json: %w", err)
+	}
+
+	if cfg.MisskeyInstance == "" || cfg.MisskeyInstance == "your.misskey.instance.com" || cfg.AccessToken == "" || cfg.AccessToken == "YOUR_MISSKEY_ACCESS_TOKEN" {
+		return nil, fmt.Errorf("please update config.json with your actual Misskey instance and access token")
+	}
+
+	return &cfg, nil
+}
+
+// --- Misskey WebSocket Communication ---
+
+// Structures for parsing Misskey's streaming messages.
+type MisskeyStreamMessage struct {
+	Type string `json:"type"`
+	Body struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		Body struct {
+			Reaction string `json:"reaction"`
+		} `json:"body"`
+	} `json:"body"`
+}
+
+// connectToMisskey establishes a WebSocket connection and listens for reactions.
+func connectToMisskey(cfg *Config, reactionChan chan<- string) {
+	// Construct the WebSocket URL.
+	u := url.URL{Scheme: "wss", Host: cfg.MisskeyInstance, Path: "/streaming", RawQuery: "i=" + cfg.AccessToken}
+	log.Printf("Connecting to %s", u.String())
+
+	// Connect to the server.
+	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	if err != nil {
+		log.Fatalf("Failed to connect to Misskey: %v", err)
+		return
+	}
+	defer c.Close()
+
+	// Subscribe to the 'main' channel to receive notifications.
+	channelID := uuid.New().String()
+	connectMsg := map[string]interface{}{
+		"type": "connect",
+		"body": map[string]interface{}{
+			"channel": "main",
+			"id":      channelID,
+		},
+	}
+	if err := c.WriteJSON(connectMsg); err != nil {
+		log.Fatalf("Failed to subscribe to channel: %v", err)
+		return
+	}
+	log.Println("Successfully connected and subscribed to 'main' channel.")
+
+	// Loop to read messages from the WebSocket.
+	for {
+		var msg MisskeyStreamMessage
+		if err := c.ReadJSON(&msg); err != nil {
+			log.Printf("Error reading message: %v", err)
+			// Simple reconnect logic
+			time.Sleep(5 * time.Second)
+			go connectToMisskey(cfg, reactionChan) // Attempt to reconnect
+			return
+		}
+
+		// Check if the message is a reaction to one of your notes.
+		if msg.Type == "channel" && msg.Body.Type == "noteUpdated" && msg.Body.Body.Reaction != "" {
+			log.Printf("Reaction received: %s", msg.Body.Body.Reaction)
+			reactionChan <- msg.Body.Body.Reaction
+		}
+	}
+}
+
+// --- Ebitengine Game Loop ---
+
+// ReactionObject represents a single emoji object on screen.
+type ReactionObject struct {
+	// TODO: Add fields for position, velocity, etc.
 }
 
 // Game implements ebiten.Game interface.
 type Game struct {
-	circles []*Circle
+	objects      []*ReactionObject
+	reactionChan <-chan string
 }
 
 // NewGame initializes the game state.
-func NewGame() *Game {
-	// As of Go 1.20, seeding the global random number generator is not necessary.
+func NewGame(rc <-chan string) *Game {
 	return &Game{
-		circles: []*Circle{},
+		reactionChan: rc,
 	}
 }
 
-// spawnCircle creates a new circle at a random screen edge and gives it a velocity.
-func (g *Game) spawnCircle(screenWidth, screenHeight int) {
-	if len(g.circles) >= maxCircles {
-		return
-	}
-
-	radius := 5.0 + rand.Float64()*15.0 // Random radius between 5 and 20
-	var x, y float64
-	edge := rand.Intn(4)
-
-	// Determine starting position based on a random edge.
-	switch edge {
-	case 0: // Top edge
-		x = rand.Float64() * float64(screenWidth)
-		y = -radius
-	case 1: // Right edge
-		x = float64(screenWidth) + radius
-		y = rand.Float64() * float64(screenHeight)
-	case 2: // Bottom edge
-		x = rand.Float64() * float64(screenWidth)
-		y = float64(screenHeight) + radius
-	case 3: // Left edge
-		x = -radius
-		y = rand.Float64() * float64(screenHeight)
-	}
-
-	// Give it a random velocity, generally directed towards the screen.
-	angle := math.Atan2(float64(screenHeight/2)-y, float64(screenWidth/2)-x)
-	angle += (rand.Float64() - 0.5) * (math.Pi / 2) // Add some random deviation
-	speed := 0.5 + rand.Float64()*1.5               // Random speed between 0.5 and 2.0
-
-	g.circles = append(g.circles, &Circle{
-		x:        x,
-		y:        y,
-		vx:       math.Cos(angle) * speed,
-		vy:       math.Sin(angle) * speed,
-		radius:   radius,
-		lifetime: minLifetime + rand.Intn(maxLifetime-minLifetime),
-	})
-}
-
-// Update proceeds the game state.
 func (g *Game) Update() error {
-	w, h := ebiten.WindowSize()
-
-	// Spawn a new circle periodically.
-	if len(g.circles) < maxCircles && rand.Intn(20) == 0 { // Spawn roughly every 1/3 second.
-		g.spawnCircle(w, h)
+	// Check for new reactions from the channel.
+	select {
+	case reaction := <-g.reactionChan:
+		log.Printf("Game loop received reaction: %s. Spawning object...", reaction)
+		// TODO: Create a new ReactionObject and add it to g.objects.
+	default:
+		// No new reaction.
 	}
 
-	// Use a new slice to store circles for the next frame.
-	// This is an easy way to remove circles from the slice while iterating.
-	nextCircles := make([]*Circle, 0, len(g.circles))
-
-	for _, c := range g.circles {
-		// Move the circle.
-		c.x += c.vx
-		c.y += c.vy
-		c.lifetime--
-
-		isOutside := c.x+c.radius < 0 || c.x-c.radius > float64(w) || c.y+c.radius < 0 || c.y-c.radius > float64(h)
-
-		// If lifetime is over and the circle is completely outside the screen, remove it.
-		if c.lifetime < 0 && isOutside {
-			continue // Don't add it to the next frame's slice.
-		}
-
-		// If lifetime is active, bounce off the walls.
-		if c.lifetime >= 0 {
-			if (c.vx < 0 && c.x-c.radius < 0) || (c.vx > 0 && c.x+c.radius > float64(w)) {
-				c.vx *= -1
-			}
-			if (c.vy < 0 && c.y-c.radius < 0) || (c.vy > 0 && c.y+c.radius > float64(h)) {
-				c.vy *= -1
-			}
-		}
-		nextCircles = append(nextCircles, c)
-	}
-	g.circles = nextCircles
-
+	// TODO: Update positions of all objects in g.objects.
 	return nil
 }
 
-// Draw draws the game screen.
 func (g *Game) Draw(screen *ebiten.Image) {
-	// The screen is automatically cleared because we have set SetScreenTransparent(true).
-	for _, c := range g.circles {
-		// Use ebiten/vector package to draw a circle.
-		vector.DrawFilledCircle(screen, float32(c.x), float32(c.y), float32(c.radius), color.White, true)
-	}
+	// TODO: Draw all objects in g.objects.
 }
 
-// Layout returns the logical screen size.
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return outsideWidth, outsideHeight
 }
 
+// --- Main Function ---
+
 func main() {
-	// Set window properties.
+	log.Println("Starting Misskey Reaction Visualizer...")
+
+	// Load configuration.
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+
+	// Create a channel to pass reactions from the WebSocket goroutine to the game loop.
+	reactionChan := make(chan string, 32)
+
+	// Start the WebSocket connection in the background.
+	go connectToMisskey(cfg, reactionChan)
+
+	// Set up Ebitengine window.
 	ebiten.SetWindowDecorated(false)
 	ebiten.SetWindowFloating(true)
 	ebiten.SetWindowMousePassthrough(true)
-	ebiten.SetWindowTitle("Floating Circles")
+	ebiten.SetWindowTitle("Misskey Reactions")
 
-	// To enable transparency with a fullscreen-like window, we can't use true
-	// fullscreen mode. Instead, we create a window that is almost fullscreen.
-	// A 1-pixel difference is usually enough to keep the window composited by the OS.
 	screenWidth, screenHeight := ebiten.Monitor().Size()
 	ebiten.SetWindowSize(screenWidth, screenHeight-1)
 
-	game := NewGame()
-
-	// As of Ebitengine v2.5, screen transparency is set via RunGameWithOptions.
+	// Create and run the game.
+	game := NewGame(reactionChan)
 	opts := ebiten.RunGameOptions{
 		ScreenTransparent: true,
 	}
