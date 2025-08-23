@@ -130,7 +130,8 @@ func runTestMode(reactionChan chan<- ReactionInfo) {
 	log.Println("--- RUNNING IN TEST MODE ---")
 	mockData := []ReactionInfo{
 		{Name: "👍"},
-		{Name: ":ebiten:", URL: "https://ebitengine.org/images/logo.png"}, // Valid custom emoji
+		// {Name: ":ebiten:", URL: "https://ebitengine.org/images/logo.png"},                                                               // Valid custom emoji
+		{Name: ":misskey:", URL: "https://proxy.misskeyusercontent.jp/image/media.misskeyusercontent.jp%2Femoji%2Fmisskey.png?emoji=1"}, // Valid custom emoji
 		{Name: "Go"}, // Standard text, will become a Twemoji
 		{Name: ":error:", URL: "https://example.com/nonexistent-image.png"}, // Invalid custom emoji to test fallback
 		{Name: "❤️"},
