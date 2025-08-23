@@ -1,4 +1,4 @@
-module floating-circles
+module github.com/yulog/ebiten-sandbox/floating-circles
 
 go 1.25.0
 
