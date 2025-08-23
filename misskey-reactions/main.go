@@ -41,7 +41,7 @@ const (
 
 var (
 	// imageCache can store *ebiten.Image for static images or *AnimatedGIF for GIFs.
-	imageCache   = make(map[string]interface{})
+	imageCache   = make(map[string]any)
 	cacheMutex   = &sync.RWMutex{}
 	fallbackFont *text.GoTextFace
 )
@@ -374,7 +374,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			x := o.x - width/2
 			y := o.y - height/2
 			op.GeoM.Translate(x, y)
-			op.ColorM.ScaleWithColor(color.White)
+			op.ColorScale.ScaleWithColor(color.White)
 			text.Draw(screen, o.fallbackText, fallbackFont, op)
 		}
 	}
