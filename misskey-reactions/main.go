@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/png"
 	"log"
 	"math"
@@ -18,6 +20,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
+	"golang.org/x/image/font/gofont/goregular"
 )
 
 const (
@@ -27,9 +31,9 @@ const (
 )
 
 var (
-	// imageCache stores downloaded emoji images to avoid re-downloading.
-	imageCache = make(map[string]*ebiten.Image)
-	cacheMutex = &sync.RWMutex{}
+	imageCache   = make(map[string]*ebiten.Image)
+	cacheMutex   = &sync.RWMutex{}
+	fallbackFont *text.GoTextFace
 )
 
 // --- Configuration ---
@@ -72,7 +76,7 @@ type NotificationBody struct {
 }
 
 type ReactionInfo struct {
-	Name string // e.g. ":blobcat:" or "👍"
+	Name string
 	URL  string
 }
 
@@ -102,10 +106,9 @@ func connectToMisskey(cfg *Config, reactionChan chan<- ReactionInfo) {
 			var n NotificationBody
 			if err := json.Unmarshal(msg.Body.Body, &n); err == nil && n.Type == "reaction" && n.Reaction != "" {
 				reaction := ReactionInfo{Name: n.Reaction}
-				// Check if it's a custom emoji with a URL
 				if url, ok := n.Note.ReactionEmojis[strings.Trim(n.Reaction, ":")]; ok {
 					reaction.URL = url
-				} // If not, it's a standard unicode emoji
+				}
 				reactionChan <- reaction
 			}
 		}
@@ -119,6 +122,9 @@ func fetchImage(url string) (*ebiten.Image, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("bad status: %s", resp.Status)
+	}
 	img, _, err := image.Decode(resp.Body)
 	if err != nil {
 		return nil, err
@@ -131,16 +137,16 @@ func emojiToTwemojiURL(emoji string) string {
 	for _, r := range emoji {
 		codes = append(codes, fmt.Sprintf("%x", r))
 	}
-	// Use jsDelivr CDN for Twemoji
 	return fmt.Sprintf("https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/%s.png", strings.Join(codes, "-"))
 }
 
 // --- Ebitengine Game Loop ---
 type ReactionObject struct {
-	x, y, vx, vy float64
-	lifetime     int
-	reactionName string
-	image        *ebiten.Image
+	x, y, vx, vy   float64
+	lifetime       int
+	reactionName   string
+	image          *ebiten.Image
+	fallbackText   string
 }
 
 type Game struct {
@@ -158,46 +164,40 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 	}
 	var x, y float64
 	edge := rand.Intn(4)
-	padding := 36.0 // Half of image size (72x72)
+	padding := 36.0
 	switch edge {
-	case 0:
-		x, y = rand.Float64()*float64(w), -padding
-	case 1:
-		x, y = float64(w)+padding, rand.Float64()*float64(h)
-	case 2:
-		x, y = rand.Float64()*float64(w), float64(h)+padding
-	case 3:
-		x, y = -padding, rand.Float64()*float64(h)
+	case 0: x, y = rand.Float64()*float64(w), -padding
+	case 1: x, y = float64(w)+padding, rand.Float64()*float64(h)
+	case 2: x, y = rand.Float64()*float64(w), float64(h)+padding
+	case 3: x, y = -padding, rand.Float64()*float64(h)
 	}
 	angle := math.Atan2(float64(h/2)-y, float64(w/2)-x) + (rand.Float64()-0.5)*(math.Pi/2)
 	speed := 0.5 + rand.Float64()*1.5
 	obj := &ReactionObject{
 		x: x, y: y, vx: math.Cos(angle) * speed, vy: math.Sin(angle) * speed,
-		lifetime:     minLifetime + rand.Intn(maxLifetime-minLifetime),
+		lifetime: minLifetime + rand.Intn(maxLifetime-minLifetime),
 		reactionName: reaction.Name,
 	}
 	g.objects = append(g.objects, obj)
 
-	// Start fetching the image in the background
 	go func() {
 		cacheMutex.RLock()
 		img, exists := imageCache[reaction.Name]
 		cacheMutex.RUnlock()
-
 		if exists {
 			obj.image = img
 			return
 		}
 
 		urlToFetch := reaction.URL
-		if urlToFetch == "" { // If it's a standard emoji
+		if urlToFetch == "" {
 			urlToFetch = emojiToTwemojiURL(reaction.Name)
 		}
 
 		newImg, err := fetchImage(urlToFetch)
 		if err != nil {
-			log.Printf("Failed to fetch image for %s from %s: %v", reaction.Name, urlToFetch, err)
-			// Optionally, remove the object if image fails
+			log.Printf("Failed to fetch image for %s: %v. Using fallback text.", reaction.Name, err)
+			obj.fallbackText = strings.Trim(reaction.Name, ":")
 			return
 		}
 
@@ -245,11 +245,18 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	for _, o := range g.objects {
 		if o.image != nil {
 			op := &ebiten.DrawImageOptions{}
-			// Center the image
 			w, h := o.image.Bounds().Dx(), o.image.Bounds().Dy()
 			op.GeoM.Translate(-float64(w)/2, -float64(h)/2)
 			op.GeoM.Translate(o.x, o.y)
 			screen.DrawImage(o.image, op)
+		} else if o.fallbackText != "" {
+			op := &text.DrawOptions{}
+			width, height := text.Measure(o.fallbackText, fallbackFont, fallbackFont.Size)
+			x := o.x - width/2
+			y := o.y - height/2
+			op.GeoM.Translate(x, y)
+			op.ColorM.ScaleWithColor(color.White)
+			text.Draw(screen, o.fallbackText, fallbackFont, op)
 		}
 	}
 }
@@ -259,6 +266,19 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 // --- Main Function ---
+func init() {
+	// Load the Go standard font for fallback text using the v2/text API.
+	fontReader := bytes.NewReader(goregular.TTF)
+	s, err := text.NewGoTextFaceSource(fontReader)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fallbackFont = &text.GoTextFace{
+		Source: s,
+		Size:   20, // Font size for fallback text
+	}
+}
+
 func main() {
 	log.Println("Starting Misskey Reaction Visualizer...")
 	cfg, err := loadConfig()
