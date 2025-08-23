@@ -7,6 +7,11 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
+	"image/gif"
+	"io"
+
+	_ "image/jpeg"
 	_ "image/png"
 	"log"
 	"math"
@@ -17,6 +22,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	_ "github.com/gen2brain/webp"
+	_ "golang.org/x/image/webp"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -32,7 +40,8 @@ const (
 )
 
 var (
-	imageCache   = make(map[string]*ebiten.Image)
+	// imageCache can store *ebiten.Image for static images or *AnimatedGIF for GIFs.
+	imageCache   = make(map[string]interface{})
 	cacheMutex   = &sync.RWMutex{}
 	fallbackFont *text.GoTextFace
 )
@@ -125,6 +134,8 @@ func runTestMode(reactionChan chan<- ReactionInfo) {
 		{Name: "Go"}, // Standard text, will become a Twemoji
 		{Name: ":error:", URL: "https://example.com/nonexistent-image.png"}, // Invalid custom emoji to test fallback
 		{Name: "❤️"},
+		{Name: ":ai_nomming:", URL: "https://proxy.misskeyusercontent.jp/image/media.misskeyusercontent.jp%2Fmisskey%2Ff6294900-f678-43cc-bc36-3ee5deeca4c2.gif?emoji=1"},
+		{Name: ":meowsurprised:", URL: "https://proxy.misskeyusercontent.jp/image/media.misskeyusercontent.jp%2Femoji%2FmeowSurprised.png?emoji=1"},
 	}
 
 	// Loop forever, sending mock data every 2 seconds
@@ -138,27 +149,71 @@ func runTestMode(reactionChan chan<- ReactionInfo) {
 }
 
 // --- Image Handling ---
-func fetchImage(url string) (*ebiten.Image, error) {
+
+// AnimatedGIF holds all the pre-rendered frames for a GIF.
+type AnimatedGIF struct {
+	Frames      []*ebiten.Image
+	FrameDelays []int // Delay in 1/100s of a second
+}
+
+// DecodedImage holds the result of decoding, which can be static or animated.
+type DecodedImage struct {
+	Static   *ebiten.Image
+	Animated *AnimatedGIF
+}
+
+// fetchAndDecodeImage downloads and decodes an image, pre-rendering GIFs correctly.
+func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("bad status: %s", resp.Status)
 	}
-	img, _, err := image.Decode(resp.Body)
+
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-	return ebiten.NewImageFromImage(img), nil
+
+	contentType := http.DetectContentType(data)
+
+	if strings.Contains(contentType, "gif") {
+		g, err := gif.DecodeAll(bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+
+		// Pre-render GIF frames onto a canvas to handle frame disposal methods correctly.
+		canvas := image.NewRGBA(image.Rect(0, 0, g.Config.Width, g.Config.Height))
+		var frames []*ebiten.Image
+		for i, srcImg := range g.Image {
+			// Correctly draw the frame at its offset, using the frame's bounds for the source point.
+			draw.Draw(canvas, srcImg.Bounds(), srcImg, srcImg.Bounds().Min, draw.Over)
+			frameCopy := image.NewRGBA(canvas.Bounds())
+			draw.Draw(frameCopy, frameCopy.Bounds(), canvas, image.Point{}, draw.Src)
+			frames = append(frames, ebiten.NewImageFromImage(frameCopy))
+
+			if g.Disposal[i] == gif.DisposalBackground {
+				draw.Draw(canvas, srcImg.Bounds(), image.Transparent, image.Point{}, draw.Src)
+			}
+		}
+		return &DecodedImage{Animated: &AnimatedGIF{Frames: frames, FrameDelays: g.Delay}}, nil
+	} else {
+		img, _, err := image.Decode(bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		return &DecodedImage{Static: ebiten.NewImageFromImage(img)}, nil
+	}
 }
 
 func emojiToTwemojiURL(emoji string) string {
 	var codes []string
 	for _, r := range emoji {
-		// Ignore the variation selector rune (U+FE0F), which is often added to emojis
-		// but not always included in the Twemoji filename.
 		if r != 0xfe0f {
 			codes = append(codes, fmt.Sprintf("%x", r))
 		}
@@ -172,6 +227,9 @@ type ReactionObject struct {
 	lifetime     int
 	reactionName string
 	image        *ebiten.Image
+	animatedGif  *AnimatedGIF
+	currentFrame int
+	frameCounter int
 	fallbackText string
 }
 
@@ -212,10 +270,14 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 
 	go func() {
 		cacheMutex.RLock()
-		img, exists := imageCache[reaction.Name]
+		cachedItem, exists := imageCache[reaction.Name]
 		cacheMutex.RUnlock()
 		if exists {
-			obj.image = img
+			if staticImg, ok := cachedItem.(*ebiten.Image); ok {
+				obj.image = staticImg
+			} else if animatedImg, ok := cachedItem.(*AnimatedGIF); ok {
+				obj.animatedGif = animatedImg
+			}
 			return
 		}
 
@@ -224,7 +286,7 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 			urlToFetch = emojiToTwemojiURL(reaction.Name)
 		}
 
-		newImg, err := fetchImage(urlToFetch)
+		decoded, err := fetchAndDecodeImage(urlToFetch)
 		if err != nil {
 			log.Printf("Failed to fetch image for %s: %v. Using fallback text.", reaction.Name, err)
 			obj.fallbackText = strings.Trim(reaction.Name, ":")
@@ -232,10 +294,17 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 		}
 
 		log.Printf("Successfully fetched image for %s", reaction.Name)
-		cacheMutex.Lock()
-		imageCache[reaction.Name] = newImg
-		cacheMutex.Unlock()
-		obj.image = newImg
+		if decoded.Animated != nil {
+			cacheMutex.Lock()
+			imageCache[reaction.Name] = decoded.Animated
+			cacheMutex.Unlock()
+			obj.animatedGif = decoded.Animated
+		} else if decoded.Static != nil {
+			cacheMutex.Lock()
+			imageCache[reaction.Name] = decoded.Static
+			cacheMutex.Unlock()
+			obj.image = decoded.Static
+		}
 	}()
 }
 
@@ -252,6 +321,19 @@ func (g *Game) Update() error {
 		o.x += o.vx
 		o.y += o.vy
 		o.lifetime--
+
+		if o.animatedGif != nil && len(o.animatedGif.Frames) > 0 {
+			o.frameCounter++
+			delayInTicks := o.animatedGif.FrameDelays[o.currentFrame] * 60 / 100
+			if delayInTicks == 0 {
+				delayInTicks = 6
+			}
+			if o.frameCounter >= delayInTicks {
+				o.frameCounter = 0
+				o.currentFrame = (o.currentFrame + 1) % len(o.animatedGif.Frames)
+			}
+		}
+
 		padding := 36.0
 		isOutside := o.x+padding < 0 || o.x-padding > float64(w) || o.y+padding < 0 || o.y-padding > float64(h)
 		if o.lifetime < 0 && isOutside {
@@ -273,12 +355,19 @@ func (g *Game) Update() error {
 
 func (g *Game) Draw(screen *ebiten.Image) {
 	for _, o := range g.objects {
-		if o.image != nil {
+		var imgToDraw *ebiten.Image
+		if o.animatedGif != nil && len(o.animatedGif.Frames) > 0 {
+			imgToDraw = o.animatedGif.Frames[o.currentFrame]
+		} else if o.image != nil {
+			imgToDraw = o.image
+		}
+
+		if imgToDraw != nil {
 			op := &ebiten.DrawImageOptions{}
-			w, h := o.image.Bounds().Dx(), o.image.Bounds().Dy()
+			w, h := imgToDraw.Bounds().Dx(), imgToDraw.Bounds().Dy()
 			op.GeoM.Translate(-float64(w)/2, -float64(h)/2)
 			op.GeoM.Translate(o.x, o.y)
-			screen.DrawImage(o.image, op)
+			screen.DrawImage(imgToDraw, op)
 		} else if o.fallbackText != "" {
 			op := &text.DrawOptions{}
 			width, height := text.Measure(o.fallbackText, fallbackFont, fallbackFont.Size)
