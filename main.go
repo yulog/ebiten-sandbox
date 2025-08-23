@@ -5,7 +5,6 @@ import (
 	"log"
 	"math"
 	"math/rand"
-	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -34,8 +33,7 @@ type Game struct {
 
 // NewGame initializes the game state.
 func NewGame() *Game {
-	// Seed the random number generator.
-	rand.Seed(time.Now().UnixNano())
+	// As of Go 1.20, seeding the global random number generator is not necessary.
 	return &Game{
 		circles: []*Circle{},
 	}
@@ -148,7 +146,7 @@ func main() {
 	// To enable transparency with a fullscreen-like window, we can't use true
 	// fullscreen mode. Instead, we create a window that is almost fullscreen.
 	// A 1-pixel difference is usually enough to keep the window composited by the OS.
-	screenWidth, screenHeight := ebiten.ScreenSizeInFullscreen()
+	screenWidth, screenHeight := ebiten.Monitor().Size()
 	ebiten.SetWindowSize(screenWidth, screenHeight-1)
 
 	game := NewGame()
