@@ -14,22 +14,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/text"
-	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/goregular"
-	"golang.org/x/image/font/opentype"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
 )
 
 const (
-	maxObjects   = 100
-	minLifetime  = 300
-	maxLifetime  = 900
-	fontSize     = 32
-	textDPI      = 72
+	maxObjects  = 100
+	minLifetime = 300
+	maxLifetime = 900
+	fontSize    = 32
+	textDPI     = 72
 )
 
 var (
-	mplusFont font.Face
+	// Use the v2 text.Face interface.
+	emojiFont text.Face
 )
 
 // --- Configuration ---
@@ -54,19 +52,17 @@ func loadConfig() (*Config, error) {
 }
 
 // --- Misskey WebSocket Communication ---
-
-// Structures adjusted for the actual "notification" event.
 type MisskeyStreamMessage struct {
 	Type string `json:"type"`
 	Body struct {
 		ID   string          `json:"id"`
-		Type string          `json:"type"` // e.g., "notification"
-		Body json.RawMessage `json:"body"` // Use RawMessage to parse the inner body later
+		Type string          `json:"type"`
+		Body json.RawMessage `json:"body"`
 	} `json:"body"`
 }
 
 type NotificationBody struct {
-	Type     string `json:"type"` // e.g., "reaction"
+	Type     string `json:"type"`
 	Reaction string `json:"reaction"`
 }
 
@@ -84,7 +80,6 @@ func connectToMisskey(cfg *Config, reactionChan chan<- string) {
 		log.Fatalf("Failed to subscribe: %v", err)
 	}
 	log.Println("Successfully connected and subscribed.")
-
 	for {
 		var msg MisskeyStreamMessage
 		if err := c.ReadJSON(&msg); err != nil {
@@ -93,15 +88,11 @@ func connectToMisskey(cfg *Config, reactionChan chan<- string) {
 			go connectToMisskey(cfg, reactionChan)
 			return
 		}
-
-		// Check for the correct event type based on the provided log.
 		if msg.Type == "channel" && msg.Body.Type == "notification" {
 			var notification NotificationBody
 			if err := json.Unmarshal(msg.Body.Body, &notification); err != nil {
-				// This can happen for other notification types, so we don't log it as an error.
 				continue
 			}
-
 			if notification.Type == "reaction" && notification.Reaction != "" {
 				reactionChan <- notification.Reaction
 			}
@@ -127,17 +118,20 @@ func NewGame(rc <-chan string) *Game {
 
 func (g *Game) spawnReaction(reaction string, w, h int) {
 	if len(g.objects) >= maxObjects {
-		log.Println("Max objects reached, not spawning.")
 		return
 	}
 	var x, y float64
 	edge := rand.Intn(4)
 	padding := float64(fontSize)
 	switch edge {
-	case 0: x, y = rand.Float64()*float64(w), -padding
-	case 1: x, y = float64(w)+padding, rand.Float64()*float64(h)
-	case 2: x, y = rand.Float64()*float64(w), float64(h)+padding
-	case 3: x, y = -padding, rand.Float64()*float64(h)
+	case 0:
+		x, y = rand.Float64()*float64(w), -padding
+	case 1:
+		x, y = float64(w)+padding, rand.Float64()*float64(h)
+	case 2:
+		x, y = rand.Float64()*float64(w), float64(h)+padding
+	case 3:
+		x, y = -padding, rand.Float64()*float64(h)
 	}
 	angle := math.Atan2(float64(h/2)-y, float64(w/2)-x) + (rand.Float64()-0.5)*(math.Pi/2)
 	speed := 0.5 + rand.Float64()*1.5
@@ -147,14 +141,12 @@ func (g *Game) spawnReaction(reaction string, w, h int) {
 		emoji:    reaction,
 	}
 	g.objects = append(g.objects, obj)
-	log.Printf("[SPAWN] New object spawned. Total objects: %d", len(g.objects))
 }
 
 func (g *Game) Update() error {
 	w, h := ebiten.WindowSize()
 	select {
 	case reaction := <-g.reactionChan:
-		log.Printf("[UPDATE] Reaction '%s' received from channel.", reaction)
 		g.spawnReaction(reaction, w, h)
 	default:
 	}
@@ -184,19 +176,25 @@ func (g *Game) Update() error {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
-	if len(g.objects) > 0 {
-		log.Printf("[DRAW] Draw call. Object count: %d", len(g.objects))
-	}
 	for _, o := range g.objects {
 		emojiToDraw := o.emoji
 		if len(o.emoji) > 2 && o.emoji[0] == ':' && o.emoji[len(o.emoji)-1] == ':' {
 			emojiToDraw = "💖"
 		}
-		bounds := text.BoundString(mplusFont, emojiToDraw)
-		x := o.x - float64(bounds.Dx())/2
-		y := o.y - float64(bounds.Min.Y+bounds.Max.Y)/2
-		drawColor := color.RGBA{R: 255, G: 0, B: 255, A: 255}
-		text.Draw(screen, emojiToDraw, mplusFont, int(x), int(y), drawColor)
+
+		// Use the v2 text API.
+		op := &text.DrawOptions{}
+		width, height := text.Measure(emojiToDraw, emojiFont, float64(fontSize))
+
+		// Calculate coordinates to center the text.
+		x := o.x - width/2
+		y := o.y - height/2
+		op.GeoM.Translate(x, y)
+
+		// For color fonts, the color multiplier should be white.
+		op.ColorM.ScaleWithColor(color.Black)
+
+		text.Draw(screen, emojiToDraw, emojiFont, op)
 	}
 }
 
@@ -206,15 +204,19 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 
 // --- Main Function ---
 func init() {
-	tt, err := opentype.Parse(goregular.TTF)
+	fontData, err := os.Open("NotoColorEmoji-Regular.ttf")
+	if err != nil {
+		log.Fatalf("Failed to read font file: %v. Please download NotoColorEmoji-Regular.ttf and place it in the project directory.", err)
+	}
+
+	src, err := text.NewGoTextFaceSource(fontData)
 	if err != nil {
 		log.Fatal(err)
 	}
-	mplusFont, err = opentype.NewFace(tt, &opentype.FaceOptions{
-		Size: fontSize, DPI: textDPI, Hinting: font.HintingFull,
-	})
-	if err != nil {
-		log.Fatal(err)
+
+	emojiFont = &text.GoTextFace{
+		Source: src,
+		Size:   fontSize,
 	}
 }
 
