@@ -157,7 +157,11 @@ func fetchImage(url string) (*ebiten.Image, error) {
 func emojiToTwemojiURL(emoji string) string {
 	var codes []string
 	for _, r := range emoji {
-		codes = append(codes, fmt.Sprintf("%x", r))
+		// Ignore the variation selector rune (U+FE0F), which is often added to emojis
+		// but not always included in the Twemoji filename.
+		if r != 0xfe0f {
+			codes = append(codes, fmt.Sprintf("%x", r))
+		}
 	}
 	return fmt.Sprintf("https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/%s.png", strings.Join(codes, "-"))
 }
