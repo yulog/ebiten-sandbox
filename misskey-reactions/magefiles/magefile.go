@@ -91,13 +91,13 @@ func Credits() {
 	defer f.Close()
 }
 
-func Cross() {
+func Cross(osname string) {
 	_, err := exec.LookPath("goxz")
 	if err != nil {
 		fmt.Println("installing goxz")
 		sh.Run("go", "install", "github.com/Songmu/goxz/cmd/goxz@latest")
 	}
-	sh.Run("goxz", "-n", BIN, "-pv=v"+VERSION, BUILD_TARGET)
+	sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", osname, "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
 }
 
 func Bump() {

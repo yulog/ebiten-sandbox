@@ -18,16 +18,28 @@ on:
 jobs:
 
   build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            osname: linux
+          - os: macos-latest
+            osname: darwin
+          - os: windows-latest
+            osname: windows
+
+    runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
 
+    - uses: nao1215/actions-ebitengine@v0
+
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.25'
+        go-version-file: '${{ github.event.inputs.module_name }}/go.mod'
 
     - name: Run Mage
       uses: magefile/mage-action@v3
@@ -36,9 +48,25 @@ jobs:
         install-only: true
 
     - name: Cross build
-      run: mage cross
+      run: mage cross ${{ matrix.osname }}
       working-directory: ${{ github.event.inputs.module_name }}
 
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.osname }}
+        path: goxz/
+
+  releases:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ${{ github.event.inputs.module_name }}/goxz
     - name: Create Release
       run: mage upload
       working-directory: ${{ github.event.inputs.module_name }}
