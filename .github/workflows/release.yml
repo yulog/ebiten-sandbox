@@ -54,9 +54,7 @@ jobs:
         install-only: true
 
     - name: Cross build
-      run: |
-        clang
-        mage cross ${{ matrix.osname }}
+      run: mage cross ${{ matrix.osname }}
       working-directory: ${{ github.event.inputs.module_name }}
 
     - name: Upload artifact
