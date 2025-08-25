@@ -36,6 +36,12 @@ jobs:
 
     - uses: nao1215/actions-ebitengine@v0
 
+    - name: Install gcc
+      if: runner.os == 'linux'
+      run: |
+        sudo apt update
+        sudo apt install -y gcc-aarch64-linux-gnu
+
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
@@ -48,7 +54,9 @@ jobs:
         install-only: true
 
     - name: Cross build
-      run: mage cross ${{ matrix.osname }}
+      run: |
+        clang
+        mage cross ${{ matrix.osname }}
       working-directory: ${{ github.event.inputs.module_name }}
 
     - name: Upload artifact
@@ -63,6 +71,8 @@ jobs:
     permissions:
       contents: write
     steps:
+    - uses: actions/checkout@v4
+
     - name: Run Mage
       uses: magefile/mage-action@6f50bbb8ea47d56e62dee92392788acbc8192d0b
       with:

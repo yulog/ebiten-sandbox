@@ -101,7 +101,7 @@ func Cross(osname string) {
 		os.Setenv("CGO_ENABLED", "1")
 	}
 	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
-		os.Setenv("CC", "aarch64-linux-gnu-gcc")
+		// os.Setenv("CC", "aarch64-linux-gnu-gcc")
 	}
 	if runtime.GOOS == "darwin" {
 		os.Setenv("CC", "clang")
