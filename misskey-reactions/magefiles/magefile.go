@@ -97,6 +97,9 @@ func Cross(osname string) {
 		fmt.Println("installing goxz")
 		sh.Run("go", "install", "github.com/Songmu/goxz/cmd/goxz@latest")
 	}
+	if runtime.GOOS != "windows" {
+		os.Setenv("CGO_ENABLED", "1")
+	}
 	sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", osname, "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
 }
 
