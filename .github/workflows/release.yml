@@ -83,7 +83,9 @@ jobs:
         path: ${{ github.event.inputs.module_name }}/goxz
 
     - name: Create Release
-      run: mage upload
+      run: |
+        ls -R
+        mage -v upload
       working-directory: ${{ github.event.inputs.module_name }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

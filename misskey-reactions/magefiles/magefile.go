@@ -91,7 +91,7 @@ func Credits() {
 	defer f.Close()
 }
 
-func Cross(osname string) {
+func Cross(goos string) {
 	_, err := exec.LookPath("goxz")
 	if err != nil {
 		fmt.Println("installing goxz")
@@ -100,13 +100,14 @@ func Cross(osname string) {
 	if runtime.GOOS != "windows" {
 		os.Setenv("CGO_ENABLED", "1")
 	}
-	if runtime.GOOS == "linux" { //&& runtime.GOARCH != "amd64"
-		os.Setenv("CC", "aarch64-linux-gnu-gcc")
-	}
 	if runtime.GOOS == "darwin" {
 		os.Setenv("CC", "clang")
 	}
-	sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", osname, "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
+	sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", goos, "-arch", "amd64", "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
+	if runtime.GOOS == "linux" && runtime.GOARCH != "amd64" {
+		os.Setenv("CC", "aarch64-linux-gnu-gcc")
+	}
+	sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", goos, "-arch", "arm64", "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
 }
 
 func Bump() {
@@ -123,6 +124,11 @@ func Upload() {
 	if err != nil {
 		fmt.Println("installing ghr")
 		sh.Run("go", "install", "github.com/tcnksm/ghr@latest")
+	}
+	dir, _ := os.Getwd()
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		fmt.Println(entry.Name())
 	}
 	sh.Run("ghr", "-draft", "v"+VERSION, "goxz")
 }
