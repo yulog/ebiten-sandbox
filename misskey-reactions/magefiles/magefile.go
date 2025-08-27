@@ -18,7 +18,7 @@ var (
 	BIN                 string = "mifloat"
 	VERSION             string = getVersion()
 	CURRENT_REVISION, _        = sh.Output("git", "rev-parse", "--short", "HEAD")
-	BUILD_LDFLAGS       string = "-s -w -H=windowsgui -X main.revision=" + CURRENT_REVISION
+	BUILD_LDFLAGS       string = "-s -w -X main.revision=" + CURRENT_REVISION
 	BUILD_TARGET        string = "."
 )
 
@@ -91,23 +91,23 @@ func Credits() {
 	defer f.Close()
 }
 
-func Cross(goos string) {
+func Cross(goos, arch string) {
 	_, err := exec.LookPath("goxz")
 	if err != nil {
 		fmt.Println("installing goxz")
 		sh.Run("go", "install", "github.com/Songmu/goxz/cmd/goxz@latest")
 	}
-	if runtime.GOOS != "windows" {
-		os.Setenv("CGO_ENABLED", "1")
+	if runtime.GOOS == "windows" {
+		BUILD_LDFLAGS += " -H=windowsgui"
 	}
 	if runtime.GOOS == "darwin" {
-		os.Setenv("CC", "clang")
+		// os.Setenv("CC", "clang")
 	}
-	sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", goos, "-arch", "amd64", "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
-	if runtime.GOOS == "linux" && runtime.GOARCH != "amd64" {
-		os.Setenv("CC", "aarch64-linux-gnu-gcc")
-	}
-	sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", goos, "-arch", "arm64", "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
+	sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", goos, "-arch", arch, "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
+	// if runtime.GOOS == "linux" && runtime.GOARCH != "amd64" {
+	// 	os.Setenv("CC", "aarch64-linux-gnu-gcc")
+	// }
+	// sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", goos, "-arch", "arm64", "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
 }
 
 func Bump() {
