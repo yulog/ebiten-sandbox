@@ -100,14 +100,7 @@ func Cross(goos, arch string) {
 	if runtime.GOOS == "windows" {
 		BUILD_LDFLAGS += " -H=windowsgui"
 	}
-	if runtime.GOOS == "darwin" {
-		// os.Setenv("CC", "clang")
-	}
 	sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", goos, "-arch", arch, "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
-	// if runtime.GOOS == "linux" && runtime.GOARCH != "amd64" {
-	// 	os.Setenv("CC", "aarch64-linux-gnu-gcc")
-	// }
-	// sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", goos, "-arch", "arm64", "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
 }
 
 func Bump() {

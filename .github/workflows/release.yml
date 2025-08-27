@@ -21,17 +21,34 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, windows-latest]
-        arch: [amd64, arm64]
-        include:
-          - os: ubuntu-latest
-            goos: linux
-          - os: macos-13
-            goos: darwin
-          - os: windows-latest
+       include:
+          # https://docs.github.com/ja/actions/concepts/runners/github-hosted-runners
+          # https://github.com/actions/runner-images
+          # https://github.com/actions/partner-runner-images
+          # ubuntu-latest (amd64)
+          - runner: ubuntu-latest
             goos: windows
+            goarch: amd64
+          - runner: ubuntu-latest
+            goos: windows
+            goarch: arm64
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          # ubuntu-24.04-arm64
+          - runner: ubuntu-24.04-arm64
+            goos: linux
+            goarch: arm64
+          # macos-13 (amd64)
+          - runner: macos-13
+            goos: darwin
+            goarch: amd64
+          # macos-14 (arm64)
+          - runner: macos-14
+            goos: darwin
+            goarch: arm64
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v4
 
@@ -47,22 +64,29 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version-file: '${{ github.event.inputs.module_name }}/go.mod'
-        architecture: ${{ matrix.arch }}
+        # architecture: ${{ matrix.goarch }}
 
     - name: Run Mage
+      if: ${{ !(runner.os == 'macOS' && runner.arch == 'ARM64') }}
       uses: magefile/mage-action@6f50bbb8ea47d56e62dee92392788acbc8192d0b
       with:
         version: latest
         install-only: true
 
+    - name: Install Mage
+      if: ${{ runner.os == 'macOS' && runner.arch == 'ARM64' }}
+      run: |
+        go install github.com/magefile/mage@latest
+        mage -init
+
     - name: Cross build
-      run: mage cross ${{ matrix.goos }} ${{ matrix.arch }}
+      run: mage cross ${{ matrix.goos }} ${{ matrix.goarch }}
       working-directory: ${{ github.event.inputs.module_name }}
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.goos }}_${{ matrix.arch }}
+        name: ${{ matrix.goos }}_${{ matrix.goarch }}
         path: ${{ github.event.inputs.module_name }}/goxz/
 
   releases:
