@@ -26,15 +26,15 @@ jobs:
           # https://github.com/actions/runner-images
           # https://github.com/actions/partner-runner-images
           # ubuntu-latest (amd64)
-          - runner: ubuntu-latest
-            goos: windows
-            goarch: amd64
-          - runner: ubuntu-latest
-            goos: windows
-            goarch: arm64
-          - runner: ubuntu-latest
-            goos: linux
-            goarch: amd64
+          # - runner: ubuntu-latest
+          #   goos: windows
+          #   goarch: amd64
+          # - runner: ubuntu-latest
+          #   goos: windows
+          #   goarch: arm64
+          # - runner: ubuntu-latest
+          #   goos: linux
+          #   goarch: amd64
           - runner: ubuntu-latest
             goos: linux
             goarch: arm64
@@ -43,13 +43,13 @@ jobs:
           #   goos: linux
           #   goarch: arm64
           # macos-13 (amd64)
-          - runner: macos-13
-            goos: darwin
-            goarch: amd64
+          # - runner: macos-13
+          #   goos: darwin
+          #   goarch: amd64
           # macos-14 (arm64)
-          - runner: macos-14
-            goos: darwin
-            goarch: arm64
+          # - runner: macos-14
+          #   goos: darwin
+          #   goarch: arm64
 
     runs-on: ${{ matrix.runner }}
     steps:
