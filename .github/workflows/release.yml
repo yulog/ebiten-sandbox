@@ -57,11 +57,11 @@ jobs:
 
     - uses: nao1215/actions-ebitengine@v0
 
-    - name: Install GLFW
-      if: ${{ matrix.goos == 'linux' && matrix.goarch == 'arm64' }}
-      run: |
-        sudo apt update
-        sudo apt install -y libglfw3-dev
+    # - name: Install GLFW
+    #   if: ${{ matrix.goos == 'linux' && matrix.goarch == 'arm64' }}
+    #   run: |
+    #     sudo apt update
+    #     sudo apt install -y libglfw3-dev
 
     - name: Set up Go
       uses: actions/setup-go@v5
