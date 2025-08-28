@@ -63,6 +63,9 @@ jobs:
         sudo apt update
         sudo apt install -y libx11-dev
 
+    - name: Verify dependency installation
+      run: ls -l /usr/include/X11/Xlib.h
+
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
@@ -88,7 +91,7 @@ jobs:
       uses: mlugg/setup-zig@v2
 
     - name: Cross build
-      run: mage cross ${{ matrix.goos }} ${{ matrix.goarch }}
+      run: mage -v cross ${{ matrix.goos }} ${{ matrix.goarch }}
       working-directory: ${{ github.event.inputs.module_name }}
 
     - name: Upload artifact
