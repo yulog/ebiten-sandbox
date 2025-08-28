@@ -103,6 +103,7 @@ func Cross(goos, arch string) {
 	// https://github.com/syncthing/syncthing/blob/7189a3ebffb7b7bd59bce510753bc6d97988eacd/.github/workflows/build-syncthing.yaml
 	if goos == "linux" && arch == "arm64" {
 		os.Setenv("CC", "zig cc -target aarch64-linux-musl")
+		os.Setenv("CGO_LDFLAGS", "-lglfw")
 	}
 	sh.Run("goxz", "-n", BIN, "-o", BIN, "-os", goos, "-arch", arch, "-pv=v"+VERSION, "-build-ldflags", BUILD_LDFLAGS, BUILD_TARGET)
 }
