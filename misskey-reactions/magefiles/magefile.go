@@ -106,7 +106,7 @@ func Cross(goos, arch string) {
 		os.Setenv("GOARCH", "arm64")
 		os.Setenv("CC", "zig cc -target aarch64-linux-gnu")
 		os.Setenv("CGO_ENABLED", "1")
-		os.Setenv("CGO_CFLAGS", "-I/usr/include")
+		os.Setenv("CGO_CFLAGS", "-isystem /usr/include")
 		// os.Setenv("CGO_LDFLAGS", "-lglfw")
 		// os.Setenv("EXTRA_LDFLAGS", "-linkmode=external -extldflags=-static")
 	}
