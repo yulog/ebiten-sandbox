@@ -35,10 +35,13 @@ jobs:
           - runner: ubuntu-latest
             goos: linux
             goarch: amd64
-          # ubuntu-24.04-arm64
-          - runner: ubuntu-24.04-arm64
+          - runner: ubuntu-latest
             goos: linux
             goarch: arm64
+          # ubuntu-24.04-arm64
+          # - runner: ubuntu-24.04-arm64
+          #   goos: linux
+          #   goarch: arm64
           # macos-13 (amd64)
           - runner: macos-13
             goos: darwin
@@ -78,6 +81,11 @@ jobs:
       run: |
         go install github.com/magefile/mage@latest
         mage -init
+
+    # https://github.com/syncthing/syncthing/blob/7189a3ebffb7b7bd59bce510753bc6d97988eacd/.github/workflows/build-syncthing.yaml
+    - name: Install Zig
+      if: ${{ matrix.goos == 'linux' && matrix.goarch == 'arm64' }}
+      uses: mlugg/setup-zig@v2
 
     - name: Cross build
       run: mage cross ${{ matrix.goos }} ${{ matrix.goarch }}
