@@ -67,7 +67,12 @@ jobs:
           libx11-dev:arm64 libxcursor-dev:arm64 libxi-dev:arm64 libxinerama-dev:arm64 libxrandr-dev:arm64 libxxf86vm-dev:arm64 libgl1-mesa-dev:arm64 libasound2-dev:arm64
 
     - name: Verify dependency installation
-      run: ls -l /usr/include/X11/Xlib.h
+      run: |
+        ls -l /usr/include/X11/Xlib.h
+        ls -l /usr/lib/aarch64-linux-gnu/libX11.so
+        export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+        pkg-config --cflags x11
+        pkg-config --libs x11
 
     - name: Set up Go
       uses: actions/setup-go@v5
