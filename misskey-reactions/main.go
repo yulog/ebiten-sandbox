@@ -423,7 +423,10 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			w, h := imgToDraw.Bounds().Dx(), imgToDraw.Bounds().Dy()
 			op.GeoM.Translate(-float64(w)/2, -float64(h)/2)
 			op.GeoM.Scale(o.scale, o.scale)
+			scale := ebiten.Monitor().DeviceScaleFactor()
+			op.GeoM.Scale(scale, scale)
 			op.GeoM.Translate(o.x, o.y)
+			op.Filter = ebiten.FilterLinear
 			screen.DrawImage(imgToDraw, op)
 		} else if o.fallbackText != "" {
 			op := &text.DrawOptions{}
@@ -438,7 +441,8 @@ func (g *Game) Draw(screen *ebiten.Image) {
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return outsideWidth, outsideHeight
+	s := ebiten.Monitor().DeviceScaleFactor()
+	return int(float64(outsideWidth) * s), int(float64(outsideHeight) * s)
 }
 
 // --- Main Function ---
@@ -477,7 +481,8 @@ func main() {
 	ebiten.SetWindowMousePassthrough(true)
 	ebiten.SetWindowTitle("Misskey Reactions")
 	screenWidth, screenHeight := ebiten.Monitor().Size()
-	ebiten.SetWindowSize(screenWidth, screenHeight-1)
+	s := ebiten.Monitor().DeviceScaleFactor()
+	ebiten.SetWindowSize(int(float64(screenWidth)*s), int(float64(screenHeight)*s)-1)
 	game := NewGame(reactionChan)
 	opts := ebiten.RunGameOptions{ScreenTransparent: true}
 	if err := ebiten.RunGameWithOptions(game, &opts); err != nil {
