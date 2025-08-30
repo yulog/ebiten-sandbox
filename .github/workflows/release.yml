@@ -57,16 +57,19 @@ jobs:
 
     - uses: nao1215/actions-ebitengine@v0
 
+    - name: apt source
+      run: cat /etc/apt/sources.list
+
     - name: Configure apt for multi-architecture
       run: |
-        sudo mv /etc/apt/sources.list /etc/apt/sources.list.bak
-        sudo sh -c 'grep "amd64" /etc/apt/sources.list.bak > /etc/apt/sources.list'
-        # [arch=arm64]と指定することで、arm64のパッケージを探す時だけこの設定が使われる
-        cat <<EOF | sudo tee /etc/apt/sources.list.d/ubuntu-ports.list
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-backports main restricted universe multiverse
-        deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
+        # sudo mv /etc/apt/sources.list /etc/apt/sources.list.bak
+        # sudo sh -c 'grep "amd64" /etc/apt/sources.list.bak > /etc/apt/sources.list'
+        cat <<EOF | sudo tee /etc/apt/sources.list.d/ubuntu-ports.sources
+        Types: deb
+        URIs: http://ports.ubuntu.com/ubuntu-ports
+        Suites: noble noble-updates noble-backports noble-security
+        Components: main restricted universe multiverse
+        Architectures: arm64
         EOF
 
     - name: Install dependencies
