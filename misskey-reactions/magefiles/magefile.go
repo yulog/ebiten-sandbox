@@ -111,7 +111,7 @@ func Cross(goos, arch string) {
 		// cflags, _ := sh.Output("pkg-config --cflags x11 xcursor xi xinerama xrandr xxf86vm gl alsa")
 		// ldflags, _ := sh.Output("pkg-config --libs x11 xcursor xi xinerama xrandr xxf86vm gl alsa")
 		os.Setenv("CGO_CFLAGS", "-isystem /usr/include")
-		// os.Setenv("CGO_LDFLAGS", ldflags)
+		os.Setenv("CGO_LDFLAGS", "-L/usr/lib/aarch64-linux-gnu")
 		// os.Setenv("EXTRA_LDFLAGS", "-linkmode=external -extldflags=-static")
 	}
 	sh.Run("go", "build", "-v", "-o", BIN, BUILD_TARGET)
