@@ -109,7 +109,7 @@ func Cross(goos, arch string) {
 		os.Setenv("PKG_CONFIG_PATH", "/usr/lib/aarch64-linux-gnu/pkgconfig")
 		cflags, _ := sh.Output("pkg-config --cflags x11 xcursor xi xinerama xrandr xxf86vm gl alsa")
 		ldflags, _ := sh.Output("pkg-config --libs x11 xcursor xi xinerama xrandr xxf86vm gl alsa")
-		os.Setenv("CGO_CFLAGS", cflags)
+		os.Setenv("CGO_CFLAGS", "-I/usr/include/aarch64-linux-gnu "+cflags)
 		os.Setenv("CGO_LDFLAGS", ldflags)
 		// os.Setenv("EXTRA_LDFLAGS", "-linkmode=external -extldflags=-static")
 	}
