@@ -104,7 +104,8 @@ func Cross(goos, arch string) {
 	if goos == "linux" && arch == "arm64" {
 		os.Setenv("GOOS", "linux")
 		os.Setenv("GOARCH", "arm64")
-		os.Setenv("CC", "zig cc -target aarch64-linux-gnu --sysroot -nostartfiles")
+		os.Setenv("CC", "zig cc -target aarch64-linux-gnu")
+		os.Setenv("CXX", "aarch64-linux-gnu-clang++")
 		os.Setenv("CGO_ENABLED", "1")
 		os.Setenv("PKG_CONFIG_PATH", "/usr/lib/aarch64-linux-gnu/pkgconfig")
 		cflags, _ := sh.Output("pkg-config --cflags x11 xcursor xi xinerama xrandr xxf86vm gl alsa")
