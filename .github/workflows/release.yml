@@ -62,8 +62,8 @@ jobs:
 
     - name: Configure apt for multi-architecture
       run: |
-        # sudo mv /etc/apt/sources.list /etc/apt/sources.list.bak
-        # sudo sh -c 'grep "amd64" /etc/apt/sources.list.bak > /etc/apt/sources.list'
+        sudo sed -i '/^Components:/ aArchitectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+        # 2. arm64用のportsリポジトリをdeb822形式で追加
         cat <<EOF | sudo tee /etc/apt/sources.list.d/ubuntu-ports.sources
         Types: deb
         URIs: http://ports.ubuntu.com/ubuntu-ports
