@@ -57,12 +57,10 @@ jobs:
 
     - uses: nao1215/actions-ebitengine@v0
 
-    - name: Disable arm64 from default repositories
-      run: |
-        sudo sed -i '/^deb .*arm64]/d' /etc/apt/sources.list  
-
     - name: Configure apt for multi-architecture
       run: |
+        sudo mv /etc/apt/sources.list /etc/apt/sources.list.bak
+        sudo sh -c 'grep "amd64" /etc/apt/sources.list.bak > /etc/apt/sources.list'
         # [arch=arm64]と指定することで、arm64のパッケージを探す時だけこの設定が使われる
         cat <<EOF | sudo tee /etc/apt/sources.list.d/ubuntu-ports.list
         deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
