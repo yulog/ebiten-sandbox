@@ -104,13 +104,13 @@ func Cross(goos, arch string) {
 	if goos == "linux" && arch == "arm64" {
 		os.Setenv("GOOS", "linux")
 		os.Setenv("GOARCH", "arm64")
-		os.Setenv("CC", "zig cc -target aarch64-linux-gnu --sysroot")
+		os.Setenv("CC", "zig cc -target aarch64-linux-gnu --sysroot -nostartfiles")
 		os.Setenv("CGO_ENABLED", "1")
 		os.Setenv("PKG_CONFIG_PATH", "/usr/lib/aarch64-linux-gnu/pkgconfig")
 		cflags, _ := sh.Output("pkg-config --cflags x11 xcursor xi xinerama xrandr xxf86vm gl alsa")
 		ldflags, _ := sh.Output("pkg-config --libs x11 xcursor xi xinerama xrandr xxf86vm gl alsa")
 		os.Setenv("CGO_CFLAGS", cflags)
-		os.Setenv("CGO_LDFLAGS", "-Wl,--gc-sections -lgcc "+ldflags)
+		os.Setenv("CGO_LDFLAGS", ldflags)
 		// os.Setenv("EXTRA_LDFLAGS", "-linkmode=external -extldflags=-static")
 	}
 	sh.Run("go", "build", "-v", "-o", BIN, BUILD_TARGET)
