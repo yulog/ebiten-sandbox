@@ -58,7 +58,7 @@ jobs:
     - uses: nao1215/actions-ebitengine@v0
 
     - name: apt source
-      run: cat /etc/apt/sources.list
+      run: /etc/apt/sources.list.d/ubuntu.sources
 
     - name: Configure apt for multi-architecture
       run: |
