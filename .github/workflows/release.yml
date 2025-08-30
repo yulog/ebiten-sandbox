@@ -26,30 +26,30 @@ jobs:
           # https://github.com/actions/runner-images
           # https://github.com/actions/partner-runner-images
           # ubuntu-latest (amd64)
-          # - runner: ubuntu-latest
-          #   goos: windows
-          #   goarch: amd64
-          # - runner: ubuntu-latest
-          #   goos: windows
-          #   goarch: arm64
+          - runner: ubuntu-latest
+            goos: windows
+            goarch: amd64
+          - runner: ubuntu-latest
+            goos: windows
+            goarch: arm64
           - runner: ubuntu-latest
             goos: linux
             goarch: amd64
-          # - runner: ubuntu-latest
-          #   goos: linux
-          #   goarch: arm64
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
           # ubuntu-24.04-arm64
           # - runner: ubuntu-24.04-arm64
           #   goos: linux
           #   goarch: arm64
           # macos-13 (amd64)
-          # - runner: macos-13
-          #   goos: darwin
-          #   goarch: amd64
+          - runner: macos-13
+            goos: darwin
+            goarch: amd64
           # macos-14 (arm64)
-          # - runner: macos-14
-          #   goos: darwin
-          #   goarch: arm64
+          - runner: macos-14
+            goos: darwin
+            goarch: arm64
 
     runs-on: ${{ matrix.runner }}
     steps:
@@ -65,7 +65,7 @@ jobs:
       if: ${{ matrix.goos == 'linux' && matrix.goarch == 'arm64' }}
       run: |
         sudo sed -i '/^Components:/ aArchitectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
-        # 2. arm64用のportsリポジトリをdeb822形式で追加
+        # arm64用のportsリポジトリをdeb822形式で追加
         cat <<EOF | sudo tee /etc/apt/sources.list.d/ubuntu-ports.sources
         Types: deb
         URIs: http://ports.ubuntu.com/ubuntu-ports
