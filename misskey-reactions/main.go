@@ -213,38 +213,16 @@ type DecodedImage struct {
 	Animated *AnimatedImage
 }
 
-// DecodeAPNGFromBytes decodes an APNG animation from a byte slice using the correct
-// method for the kettek/apng library, ensuring proper canvas size and frame placement.
-func DecodeAPNGFromBytes(data []byte) (*AnimatedImage, error) {
-	// The kettek/apng library requires calling DecodeConfig to get canvas dimensions,
-	// as DecodeAll does not expose them directly. We need two readers for the data.
-	reader1 := bytes.NewReader(data)
-	reader2 := bytes.NewReader(data)
-
-	// 1. Get canvas dimensions.
-	config, err := apng.DecodeConfig(reader1)
-	if err != nil {
-		return nil, fmt.Errorf("apng.DecodeConfig failed: %w", err)
-	}
-	canvasWidth, canvasHeight := config.Width, config.Height
-	if canvasWidth == 0 || canvasHeight == 0 {
-		return nil, fmt.Errorf("APNG has invalid canvas dimensions: %dx%d", canvasWidth, canvasHeight)
-	}
-
-	// 2. Decode all frame data.
-	animation, err := apng.DecodeAll(reader2)
-	if err != nil {
-		return nil, fmt.Errorf("apng.DecodeAll failed: %w", err)
-	}
-
+// preRenderApngAnimation composites an APNG's frames onto a canvas.
+func preRenderApngAnimation(animation *apng.APNG, canvasWidth, canvasHeight int) *AnimatedImage {
 	var frames []*ebiten.Image
 	var frameDelays []int
 
-	// 3. Prepare canvases for composition.
+	// Prepare canvases for composition.
 	canvas := image.NewRGBA(image.Rect(0, 0, canvasWidth, canvasHeight))
 	prevCanvas := image.NewRGBA(image.Rect(0, 0, canvasWidth, canvasHeight)) // For DISPOSE_OP_PREVIOUS
 
-	// 4. Loop through frames and composite them.
+	// Loop through frames and composite them.
 	for _, frame := range animation.Frames {
 		// Skip the default image, it's not part of the animation.
 		if frame.IsDefault {
@@ -286,15 +264,29 @@ func DecodeAPNGFromBytes(data []byte) (*AnimatedImage, error) {
 		case apng.DISPOSE_OP_PREVIOUS:
 			// Revert the canvas to the state before this frame was drawn.
 			draw.Draw(canvas, canvas.Bounds(), prevCanvas, image.Point{}, draw.Src)
-			// case apng.DISPOSE_OP_NONE:
-			// Do nothing, leave the canvas as is for the next frame.
 		}
 	}
 
 	return &AnimatedImage{
 		Frames:      frames,
 		FrameDelays: frameDelays,
-	}, nil
+	}
+}
+
+// preRenderGifAnimation composites a GIF's frames onto a canvas.
+func preRenderGifAnimation(g *gif.GIF) *AnimatedImage {
+	canvas := image.NewRGBA(image.Rect(0, 0, g.Config.Width, g.Config.Height))
+	var frames []*ebiten.Image
+	for i, srcImg := range g.Image {
+		draw.Draw(canvas, srcImg.Bounds(), srcImg, srcImg.Bounds().Min, draw.Over)
+		frameCopy := image.NewRGBA(canvas.Bounds())
+		draw.Draw(frameCopy, frameCopy.Bounds(), canvas, image.Point{}, draw.Src)
+		frames = append(frames, ebiten.NewImageFromImage(frameCopy))
+		if g.Disposal[i] == gif.DisposalBackground {
+			draw.Draw(canvas, srcImg.Bounds(), image.Transparent, image.Point{}, draw.Src)
+		}
+	}
+	return &AnimatedImage{Frames: frames, FrameDelays: g.Delay}
 }
 
 // fetchAndDecodeImage downloads and decodes an image. It distinguishes between static
@@ -330,37 +322,52 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 			return &DecodedImage{Static: ebiten.NewImageFromImage(img)}, nil
 		}
 
-		// Otherwise, process it as an animation.
-		canvas := image.NewRGBA(image.Rect(0, 0, g.Config.Width, g.Config.Height))
-		var frames []*ebiten.Image
-		for i, srcImg := range g.Image {
-			draw.Draw(canvas, srcImg.Bounds(), srcImg, srcImg.Bounds().Min, draw.Over)
-			frameCopy := image.NewRGBA(canvas.Bounds())
-			draw.Draw(frameCopy, frameCopy.Bounds(), canvas, image.Point{}, draw.Src)
-			frames = append(frames, ebiten.NewImageFromImage(frameCopy))
-			if g.Disposal[i] == gif.DisposalBackground {
-				draw.Draw(canvas, srcImg.Bounds(), image.Transparent, image.Point{}, draw.Src)
-			}
-		}
-		return &DecodedImage{Animated: &AnimatedImage{Frames: frames, FrameDelays: g.Delay}}, nil
+		// Otherwise, process it as an animation by pre-rendering it.
+		anim := preRenderGifAnimation(g)
+		return &DecodedImage{Animated: anim}, nil
 
 	} else if strings.Contains(contentType, "png") {
-		// DecodeAPNGFromBytes is the only way to know if it's animated,
-		// as it returns a slice of frames.
-		anim, err := DecodeAPNGFromBytes(data)
+		// To properly handle APNG, we need to decode it fully first.
+		// We need two readers because we first read config, then the whole animation.
+		reader1 := bytes.NewReader(data)
+		reader2 := bytes.NewReader(data)
+
+		config, err := apng.DecodeConfig(reader1)
 		if err != nil {
-			// If decoding fails, try to decode as a simple static image as a fallback.
+			// If it's not even a valid PNG, we can't proceed.
+			return nil, err
+		}
+
+		animation, err := apng.DecodeAll(reader2)
+		if err != nil {
+			// If DecodeAll fails, it might be a simple static PNG that DecodeAll doesn't handle.
+			// Fallback to the standard image/png decoder.
 			img, _, staticErr := image.Decode(bytes.NewReader(data))
 			if staticErr != nil {
-				return nil, err // Return original error if fallback also fails
+				return nil, err // Return original apng error
 			}
 			return &DecodedImage{Static: ebiten.NewImageFromImage(img)}, nil
 		}
 
-		// If we only got one frame, treat it as a static image.
-		if len(anim.Frames) <= 1 {
-			return &DecodedImage{Static: anim.Frames[0]}, nil
+		// Check number of actual animation frames (non-default).
+		numFrames := 0
+		for _, f := range animation.Frames {
+			if !f.IsDefault {
+				numFrames++
+			}
 		}
+
+		if numFrames <= 1 {
+			// If there's only one frame (or none), treat it as a static image.
+			img, _, err := image.Decode(bytes.NewReader(data))
+			if err != nil {
+				return nil, err
+			}
+			return &DecodedImage{Static: ebiten.NewImageFromImage(img)}, nil
+		}
+
+		// It's an animation, so pre-render the frames.
+		anim := preRenderApngAnimation(&animation, config.Width, config.Height)
 		return &DecodedImage{Animated: anim}, nil
 
 	} else {
