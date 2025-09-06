@@ -445,55 +445,62 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 	}
 	g.objects = append(g.objects, obj)
 
-	go func() {
-		cacheMutex.RLock()
-		cachedItem, exists := imageCache[reaction.Name]
-		cacheMutex.RUnlock()
-		if exists {
-			if staticImg, ok := cachedItem.(*ebiten.Image); ok {
-				obj.image = staticImg
-			} else if anim, ok := cachedItem.(*AnimatedImage); ok {
-				obj.animatedImage = anim
+	go loadReactionImage(obj, reaction)
+}
+
+// loadReactionImage handles the asynchronous fetching, decoding, and caching of a reaction image.
+func loadReactionImage(obj *ReactionObject, reaction ReactionInfo) {
+	// Check cache first
+	cacheMutex.RLock()
+	cachedItem, exists := imageCache[reaction.Name]
+	cacheMutex.RUnlock()
+	if exists {
+		if staticImg, ok := cachedItem.(*ebiten.Image); ok {
+			obj.image = staticImg
+		} else if anim, ok := cachedItem.(*AnimatedImage); ok {
+			obj.animatedImage = anim
+		}
+		return
+	}
+
+	// Determine URL to fetch
+	urlToFetch := reaction.URL
+	if urlToFetch == "" {
+		if len(reaction.Name) > 2 && reaction.Name[0] == ':' && reaction.Name[len(reaction.Name)-1] == ':' {
+			var err error
+			emojiName := strings.Trim(reaction.Name, ":")
+			urlToFetch, err = queryEmojiAPI(emojiName)
+			if err != nil {
+				log.Printf("Failed to query API for emoji '%s': %v", emojiName, err)
+				obj.fallbackText = emojiName
+				return
 			}
-			return
+		} else {
+			urlToFetch = emojiToTwemojiURL(reaction.Name)
 		}
+	}
 
-		urlToFetch := reaction.URL
-		if urlToFetch == "" {
-			if len(reaction.Name) > 2 && reaction.Name[0] == ':' && reaction.Name[len(reaction.Name)-1] == ':' {
-				var err error
-				emojiName := strings.Trim(reaction.Name, ":")
-				urlToFetch, err = queryEmojiAPI(emojiName)
-				if err != nil {
-					log.Printf("Failed to query API for emoji '%s': %v", emojiName, err)
-					obj.fallbackText = emojiName
-					return
-				}
-			} else {
-				urlToFetch = emojiToTwemojiURL(reaction.Name)
-			}
-		}
+	// Fetch and decode the image
+	decoded, err := fetchAndDecodeImage(urlToFetch)
+	if err != nil {
+		log.Printf("Failed to fetch image for %s: %v. Using fallback text.", reaction.Name, err)
+		obj.fallbackText = strings.Trim(reaction.Name, ":")
+		return
+	}
 
-		decoded, err := fetchAndDecodeImage(urlToFetch)
-		if err != nil {
-			log.Printf("Failed to fetch image for %s: %v. Using fallback text.", reaction.Name, err)
-			obj.fallbackText = strings.Trim(reaction.Name, ":")
-			return
-		}
-
-		log.Printf("Successfully fetched image for %s", reaction.Name)
-		if decoded.Animated != nil {
-			cacheMutex.Lock()
-			imageCache[reaction.Name] = decoded.Animated
-			cacheMutex.Unlock()
-			obj.animatedImage = decoded.Animated
-		} else if decoded.Static != nil {
-			cacheMutex.Lock()
-			imageCache[reaction.Name] = decoded.Static
-			cacheMutex.Unlock()
-			obj.image = decoded.Static
-		}
-	}()
+	// Update object and cache
+	log.Printf("Successfully fetched image for %s", reaction.Name)
+	if decoded.Animated != nil {
+		cacheMutex.Lock()
+		imageCache[reaction.Name] = decoded.Animated
+		cacheMutex.Unlock()
+		obj.animatedImage = decoded.Animated
+	} else if decoded.Static != nil {
+		cacheMutex.Lock()
+		imageCache[reaction.Name] = decoded.Static
+		cacheMutex.Unlock()
+		obj.image = decoded.Static
+	}
 }
 
 func (g *Game) Update() error {
