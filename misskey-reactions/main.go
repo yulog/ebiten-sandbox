@@ -40,9 +40,14 @@ const version = "0.0.3"
 var revision = "HEAD"
 
 const (
-	maxObjects  = 100
-	minLifetime = 300
-	maxLifetime = 900
+	maxObjects             = 100
+	minLifetime            = 300
+	maxLifetime            = 900
+	objectHalfSize         = 36.0 // Assumes 72x72 images, used for padding
+	minObjectSpeed         = 0.5
+	maxObjectSpeed         = 2.0
+	objectAngleSpread      = math.Pi / 2
+	defaultFrameDelayTicks = 6
 )
 
 var (
@@ -419,7 +424,7 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 	var x, y float64
 	edge := rand.Intn(4)
 	scale := 0.5 + rand.Float64() // Random scale from 0.5 to 1.5
-	padding := 36.0 * scale
+	padding := objectHalfSize * scale
 	switch edge {
 	case 0:
 		x, y = rand.Float64()*float64(w), -padding
@@ -430,8 +435,8 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 	case 3:
 		x, y = -padding, rand.Float64()*float64(h)
 	}
-	angle := math.Atan2(float64(h/2)-y, float64(w/2)-x) + (rand.Float64()-0.5)*(math.Pi/2)
-	speed := 0.5 + rand.Float64()*1.5
+	angle := math.Atan2(float64(h/2)-y, float64(w/2)-x) + (rand.Float64()-0.5)*objectAngleSpread
+	speed := minObjectSpeed + rand.Float64()*(maxObjectSpeed-minObjectSpeed)
 	obj := &ReactionObject{
 		x: x, y: y, vx: math.Cos(angle) * speed, vy: math.Sin(angle) * speed,
 		lifetime:     minLifetime + rand.Intn(maxLifetime-minLifetime),
@@ -509,7 +514,7 @@ func (g *Game) Update() error {
 			o.frameCounter++
 			delayInTicks := o.animatedImage.FrameDelays[o.currentFrame] * 60 / 100
 			if delayInTicks == 0 {
-				delayInTicks = 6
+				delayInTicks = defaultFrameDelayTicks
 			}
 			if o.frameCounter >= delayInTicks {
 				o.frameCounter = 0
@@ -517,7 +522,7 @@ func (g *Game) Update() error {
 			}
 		}
 
-		padding := 36.0 * o.scale
+		padding := objectHalfSize * o.scale
 		isOutside := o.x+padding < 0 || o.x-padding > float64(w) || o.y+padding < 0 || o.y-padding > float64(h)
 		if o.lifetime < 0 && isOutside {
 			continue
