@@ -297,7 +297,8 @@ func DecodeAPNGFromBytes(data []byte) (*AnimatedImage, error) {
 	}, nil
 }
 
-// fetchAndDecodeImage downloads and decodes an image, pre-rendering GIFs correctly.
+// fetchAndDecodeImage downloads and decodes an image. It distinguishes between static
+// and animated images to process them more efficiently.
 func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -312,17 +313,27 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 		return nil, err
 	}
 	contentType := http.DetectContentType(data)
+
 	if strings.Contains(contentType, "gif") {
+		// First, decode the full GIF to check the frame count.
 		g, err := gif.DecodeAll(bytes.NewReader(data))
 		if err != nil {
 			return nil, err
 		}
 
-		// Pre-render GIF frames onto a canvas to handle frame disposal methods correctly.
+		// If it's a single-frame GIF, treat it as a static image.
+		if len(g.Image) <= 1 {
+			img, _, err := image.Decode(bytes.NewReader(data))
+			if err != nil {
+				return nil, err
+			}
+			return &DecodedImage{Static: ebiten.NewImageFromImage(img)}, nil
+		}
+
+		// Otherwise, process it as an animation.
 		canvas := image.NewRGBA(image.Rect(0, 0, g.Config.Width, g.Config.Height))
 		var frames []*ebiten.Image
 		for i, srcImg := range g.Image {
-			// Correctly draw the frame at its offset, using the frame's bounds for the source point.
 			draw.Draw(canvas, srcImg.Bounds(), srcImg, srcImg.Bounds().Min, draw.Over)
 			frameCopy := image.NewRGBA(canvas.Bounds())
 			draw.Draw(frameCopy, frameCopy.Bounds(), canvas, image.Point{}, draw.Src)
@@ -332,13 +343,28 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 			}
 		}
 		return &DecodedImage{Animated: &AnimatedImage{Frames: frames, FrameDelays: g.Delay}}, nil
+
 	} else if strings.Contains(contentType, "png") {
-		img, err := DecodeAPNGFromBytes(data)
+		// DecodeAPNGFromBytes is the only way to know if it's animated,
+		// as it returns a slice of frames.
+		anim, err := DecodeAPNGFromBytes(data)
 		if err != nil {
-			return nil, err
+			// If decoding fails, try to decode as a simple static image as a fallback.
+			img, _, staticErr := image.Decode(bytes.NewReader(data))
+			if staticErr != nil {
+				return nil, err // Return original error if fallback also fails
+			}
+			return &DecodedImage{Static: ebiten.NewImageFromImage(img)}, nil
 		}
-		return &DecodedImage{Animated: img}, nil
+
+		// If we only got one frame, treat it as a static image.
+		if len(anim.Frames) <= 1 {
+			return &DecodedImage{Static: anim.Frames[0]}, nil
+		}
+		return &DecodedImage{Animated: anim}, nil
+
 	} else {
+		// For all other image types (jpeg, etc.)
 		img, _, err := image.Decode(bytes.NewReader(data))
 		if err != nil {
 			return nil, err
