@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kettek/apng"
+
 	_ "github.com/gen2brain/webp"
 	_ "golang.org/x/image/webp"
 
@@ -44,7 +46,7 @@ const (
 )
 
 var (
-	// imageCache can store *ebiten.Image for static images or *AnimatedGIF for GIFs.
+	// imageCache can store *ebiten.Image for static images or *AnimatedImage for animations.
 	imageCache   = make(map[string]any)
 	cacheMutex   = &sync.RWMutex{}
 	fallbackFont *text.GoTextFace
@@ -183,6 +185,8 @@ func runTestMode(reactionChan chan<- ReactionInfo) {
 		{Name: ":ai_nomming:", URL: "https://proxy.misskeyusercontent.jp/image/media.misskeyusercontent.jp%2Fmisskey%2Ff6294900-f678-43cc-bc36-3ee5deeca4c2.gif?emoji=1"},
 		{Name: ":meowsurprised:", URL: "https://proxy.misskeyusercontent.jp/image/media.misskeyusercontent.jp%2Femoji%2FmeowSurprised.png?emoji=1"},
 		{Name: ":bug:"},
+		{Name: ":syuilo_yay:"}, // invalid format: chunk out of order
+		{Name: ":ai_akan:"},
 	}
 
 	// Loop forever, sending mock data every 2 seconds
@@ -197,8 +201,8 @@ func runTestMode(reactionChan chan<- ReactionInfo) {
 
 // --- Image Handling ---
 
-// AnimatedGIF holds all the pre-rendered frames for a GIF.
-type AnimatedGIF struct {
+// AnimatedImage holds all the pre-rendered frames for an animation.
+type AnimatedImage struct {
 	Frames      []*ebiten.Image
 	FrameDelays []int // Delay in 1/100s of a second
 }
@@ -206,7 +210,91 @@ type AnimatedGIF struct {
 // DecodedImage holds the result of decoding, which can be static or animated.
 type DecodedImage struct {
 	Static   *ebiten.Image
-	Animated *AnimatedGIF
+	Animated *AnimatedImage
+}
+
+// DecodeAPNGFromBytes decodes an APNG animation from a byte slice using the correct
+// method for the kettek/apng library, ensuring proper canvas size and frame placement.
+func DecodeAPNGFromBytes(data []byte) (*AnimatedImage, error) {
+	// The kettek/apng library requires calling DecodeConfig to get canvas dimensions,
+	// as DecodeAll does not expose them directly. We need two readers for the data.
+	reader1 := bytes.NewReader(data)
+	reader2 := bytes.NewReader(data)
+
+	// 1. Get canvas dimensions.
+	config, err := apng.DecodeConfig(reader1)
+	if err != nil {
+		return nil, fmt.Errorf("apng.DecodeConfig failed: %w", err)
+	}
+	canvasWidth, canvasHeight := config.Width, config.Height
+	if canvasWidth == 0 || canvasHeight == 0 {
+		return nil, fmt.Errorf("APNG has invalid canvas dimensions: %dx%d", canvasWidth, canvasHeight)
+	}
+
+	// 2. Decode all frame data.
+	animation, err := apng.DecodeAll(reader2)
+	if err != nil {
+		return nil, fmt.Errorf("apng.DecodeAll failed: %w", err)
+	}
+
+	var frames []*ebiten.Image
+	var frameDelays []int
+
+	// 3. Prepare canvases for composition.
+	canvas := image.NewRGBA(image.Rect(0, 0, canvasWidth, canvasHeight))
+	prevCanvas := image.NewRGBA(image.Rect(0, 0, canvasWidth, canvasHeight)) // For DISPOSE_OP_PREVIOUS
+
+	// 4. Loop through frames and composite them.
+	for _, frame := range animation.Frames {
+		// Skip the default image, it's not part of the animation.
+		if frame.IsDefault {
+			continue
+		}
+
+		// Save canvas state before drawing, in case we need to revert for DISPOSE_OP_PREVIOUS.
+		draw.Draw(prevCanvas, prevCanvas.Bounds(), canvas, image.Point{}, draw.Src)
+
+		// Determine the drawing operator (draw.Src or draw.Over).
+		var op draw.Op = draw.Over
+		if frame.BlendOp == apng.BLEND_OP_SOURCE {
+			op = draw.Src
+		}
+
+		// Calculate the destination rectangle using the frame's X/Y offsets and dimensions.
+		frameWidth := frame.Image.Bounds().Dx()
+		frameHeight := frame.Image.Bounds().Dy()
+		dstRect := image.Rect(frame.XOffset, frame.YOffset, frame.XOffset+frameWidth, frame.YOffset+frameHeight)
+
+		// Draw the frame image onto the canvas at the correct offset.
+		draw.Draw(canvas, dstRect, frame.Image, frame.Image.Bounds().Min, op)
+
+		// Create a true copy of the canvas for this animation frame.
+		frameCopy := image.NewRGBA(canvas.Bounds())
+		draw.Draw(frameCopy, frameCopy.Bounds(), canvas, image.Point{}, draw.Src)
+		frames = append(frames, ebiten.NewImageFromImage(frameCopy))
+
+		// Convert frame delay and append.
+		delaySeconds := frame.GetDelay() // Returns delay in seconds as float64
+		delayInHundredths := int(math.Round(delaySeconds * 100))
+		frameDelays = append(frameDelays, delayInHundredths)
+
+		// Handle disposal method to prepare canvas for the *next* frame.
+		switch frame.DisposeOp {
+		case apng.DISPOSE_OP_BACKGROUND:
+			// Clear the frame's area to transparent.
+			draw.Draw(canvas, dstRect, image.Transparent, image.Point{}, draw.Src)
+		case apng.DISPOSE_OP_PREVIOUS:
+			// Revert the canvas to the state before this frame was drawn.
+			draw.Draw(canvas, canvas.Bounds(), prevCanvas, image.Point{}, draw.Src)
+			// case apng.DISPOSE_OP_NONE:
+			// Do nothing, leave the canvas as is for the next frame.
+		}
+	}
+
+	return &AnimatedImage{
+		Frames:      frames,
+		FrameDelays: frameDelays,
+	}, nil
 }
 
 // fetchAndDecodeImage downloads and decodes an image, pre-rendering GIFs correctly.
@@ -243,7 +331,13 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 				draw.Draw(canvas, srcImg.Bounds(), image.Transparent, image.Point{}, draw.Src)
 			}
 		}
-		return &DecodedImage{Animated: &AnimatedGIF{Frames: frames, FrameDelays: g.Delay}}, nil
+		return &DecodedImage{Animated: &AnimatedImage{Frames: frames, FrameDelays: g.Delay}}, nil
+	} else if strings.Contains(contentType, "png") {
+		img, err := DecodeAPNGFromBytes(data)
+		if err != nil {
+			return nil, err
+		}
+		return &DecodedImage{Animated: img}, nil
 	} else {
 		img, _, err := image.Decode(bytes.NewReader(data))
 		if err != nil {
@@ -265,15 +359,15 @@ func emojiToTwemojiURL(emoji string) string {
 
 // --- Ebitengine Game Loop ---
 type ReactionObject struct {
-	x, y, vx, vy float64
-	lifetime     int
-	reactionName string
-	image        *ebiten.Image
-	animatedGif  *AnimatedGIF
-	currentFrame int
-	frameCounter int
-	fallbackText string
-	scale        float64
+	x, y, vx, vy  float64
+	lifetime      int
+	reactionName  string
+	image         *ebiten.Image
+	animatedImage *AnimatedImage
+	currentFrame  int
+	frameCounter  int
+	fallbackText  string
+	scale         float64
 }
 
 type Game struct {
@@ -320,8 +414,8 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 		if exists {
 			if staticImg, ok := cachedItem.(*ebiten.Image); ok {
 				obj.image = staticImg
-			} else if animatedImg, ok := cachedItem.(*AnimatedGIF); ok {
-				obj.animatedGif = animatedImg
+			} else if anim, ok := cachedItem.(*AnimatedImage); ok {
+				obj.animatedImage = anim
 			}
 			return
 		}
@@ -354,7 +448,7 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 			cacheMutex.Lock()
 			imageCache[reaction.Name] = decoded.Animated
 			cacheMutex.Unlock()
-			obj.animatedGif = decoded.Animated
+			obj.animatedImage = decoded.Animated
 		} else if decoded.Static != nil {
 			cacheMutex.Lock()
 			imageCache[reaction.Name] = decoded.Static
@@ -378,15 +472,15 @@ func (g *Game) Update() error {
 		o.y += o.vy
 		o.lifetime--
 
-		if o.animatedGif != nil && len(o.animatedGif.Frames) > 0 {
+		if o.animatedImage != nil && len(o.animatedImage.Frames) > 0 {
 			o.frameCounter++
-			delayInTicks := o.animatedGif.FrameDelays[o.currentFrame] * 60 / 100
+			delayInTicks := o.animatedImage.FrameDelays[o.currentFrame] * 60 / 100
 			if delayInTicks == 0 {
 				delayInTicks = 6
 			}
 			if o.frameCounter >= delayInTicks {
 				o.frameCounter = 0
-				o.currentFrame = (o.currentFrame + 1) % len(o.animatedGif.Frames)
+				o.currentFrame = (o.currentFrame + 1) % len(o.animatedImage.Frames)
 			}
 		}
 
@@ -412,8 +506,8 @@ func (g *Game) Update() error {
 func (g *Game) Draw(screen *ebiten.Image) {
 	for _, o := range g.objects {
 		var imgToDraw *ebiten.Image
-		if o.animatedGif != nil && len(o.animatedGif.Frames) > 0 {
-			imgToDraw = o.animatedGif.Frames[o.currentFrame]
+		if o.animatedImage != nil && len(o.animatedImage.Frames) > 0 {
+			imgToDraw = o.animatedImage.Frames[o.currentFrame]
 		} else if o.image != nil {
 			imgToDraw = o.image
 		}

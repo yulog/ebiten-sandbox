@@ -20,6 +20,8 @@ github.com/hajimehoshi/ebiten/v2 v2.8.8 h1:xyMxOAn52T1tQ+j3vdieZ7auDBOXmvjUprSrx
 github.com/hajimehoshi/ebiten/v2 v2.8.8/go.mod h1:durJ05+OYnio9b8q0sEtOgaNeBEQG7Yr7lRviAciYbs=
 github.com/jezek/xgb v1.1.1 h1:bE/r8ZZtSv7l9gk6nU0mYx51aXrvnyb44892TwSaqS4=
 github.com/jezek/xgb v1.1.1/go.mod h1:nrhwO0FX/enq75I7Y7G8iN1ubpSGZEiA3v9e9GyRFlk=
+github.com/kettek/apng v0.0.0-20250827064933-2bb5f5fcf253 h1:ar6YqPcuumkcWgAJHkmda6Q35V3OnpxeTej4iU/QFLA=
+github.com/kettek/apng v0.0.0-20250827064933-2bb5f5fcf253/go.mod h1:x78/VRQYKuCftMWS0uK5e+F5RJ7S4gSlESRWI0Prl6Q=
 github.com/magefile/mage v1.15.0 h1:BvGheCMAsG3bWUDbZ8AyXXpCNwU9u5CB6sM+HNb9HYg=
 github.com/magefile/mage v1.15.0/go.mod h1:z5UZb/iS3GoOSn0JgWuiw7dxlurVYTu+/jHXqQg881A=
 github.com/pierrec/lz4/v4 v4.1.21 h1:yOVMLb6qSIDP67pl/5F7RepeKYu/VmTyEXvuMI5d9mQ=

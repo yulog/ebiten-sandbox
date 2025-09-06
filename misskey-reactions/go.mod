@@ -19,6 +19,7 @@ require (
 	github.com/gen2brain/webp v0.5.5
 	github.com/go-text/typesetting v0.2.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
+	github.com/kettek/apng v0.0.0-20250827064933-2bb5f5fcf253
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.25.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
