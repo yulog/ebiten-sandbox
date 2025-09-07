@@ -191,6 +191,9 @@ func runTestMode(reactionChan chan<- ReactionInfo) {
 		{Name: ":bug:"},
 		{Name: ":syuilo_yay:"}, // invalid format: chunk out of order
 		{Name: ":ai_akan:"},
+		{Name: ":murakamisan_spin:"},
+		{Name: ":blobdance2:"},
+		{Name: ":resonyance:"},
 	}
 
 	// Loop forever, sending mock data every 2 seconds
