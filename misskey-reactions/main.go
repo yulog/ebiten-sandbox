@@ -26,7 +26,6 @@ import (
 	"github.com/kettek/apng"
 
 	_ "github.com/gen2brain/webp"
-	_ "golang.org/x/image/webp"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
