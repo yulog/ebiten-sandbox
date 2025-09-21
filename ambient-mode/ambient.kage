@@ -4,14 +4,14 @@ package main
 
 var BlurSize float
 
+// ぼかしの最大範囲を定数として定義
+const maxBlurSize = 30.0
+
 func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
-	// ぼかしの最大範囲を定数として定義
-	const maxBlurSize = 30.0
-	
 	// `BlurSize`はGoから受け取った値で、コンパイル時には不明なため、
 	// `for`ループの範囲には使用できません。
 	// 代わりに、固定の`maxBlurSize`をループの範囲に使用します。
-	
+
 	sum := vec4(0)
 	totalWeight := 0.0
 
@@ -19,11 +19,11 @@ func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
 		for x := -int(maxBlurSize); x <= int(maxBlurSize); x++ {
 			// 現在のピクセルからの距離を計算
 			dist := distance(vec2(0, 0), vec2(float(x), float(y)))
-			
+
 			// ガウス関数を使って重み付けを計算
 			// この計算により、中心に近いピクセルほど影響が強くなる
 			weight := exp(-(dist * dist) / (2.0 * BlurSize * BlurSize))
-			
+
 			// 重み付けされた色と重みを加算
 			sum += imageSrc0At(srcPos + vec2(float(x), float(y))) * vec4(weight)
 			totalWeight += weight
@@ -43,6 +43,6 @@ func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
 	endFadeDist := imageSrc0Size().x * 0.4
 
 	alpha := 1.0 - clamp((dist - startFadeDist) / (endFadeDist - startFadeDist), 0.0, 1.0)
-	
+
 	return vec4(sum.rgb, sum.a * alpha)
 }
