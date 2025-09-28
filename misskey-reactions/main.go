@@ -25,7 +25,7 @@ import (
 
 	"github.com/kettek/apng"
 
-	_ "github.com/gen2brain/webp"
+	"github.com/gen2brain/webp"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -280,6 +280,22 @@ func preRenderApngAnimation(animation *apng.APNG, canvasWidth, canvasHeight int)
 	}
 }
 
+// preRenderWebpAnimation composites a WebP animation's frames.
+func preRenderWebpAnimation(animation *webp.WEBP) *AnimatedImage {
+	var frames []*ebiten.Image
+	for _, frame := range animation.Image {
+		frames = append(frames, ebiten.NewImageFromImage(frame))
+	}
+
+	// Convert delay from milliseconds to 1/100s of a second.
+	delaysInHundredths := make([]int, len(animation.Delay))
+	for i, d := range animation.Delay {
+		delaysInHundredths[i] = int(math.Round(float64(d) / 10.0))
+	}
+
+	return &AnimatedImage{Frames: frames, FrameDelays: delaysInHundredths}
+}
+
 // preRenderGifAnimation composites a GIF's frames onto a canvas.
 func preRenderGifAnimation(g *gif.GIF) *AnimatedImage {
 	canvas := image.NewRGBA(image.Rect(0, 0, g.Config.Width, g.Config.Height))
@@ -377,6 +393,27 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 		anim := preRenderApngAnimation(&animation, config.Width, config.Height)
 		return &DecodedImage{Animated: anim}, nil
 
+	} else if strings.Contains(contentType, "webp") {
+		animation, err := webp.DecodeAll(bytes.NewReader(data))
+		if err != nil {
+			// Fallback to static image decoding if animation fails
+			img, staticErr := webp.Decode(bytes.NewReader(data))
+			if staticErr != nil {
+				return nil, err // Return original animation error
+			}
+			return &DecodedImage{Static: ebiten.NewImageFromImage(img)}, nil
+		}
+
+		if len(animation.Image) <= 1 {
+			img, err := webp.Decode(bytes.NewReader(data))
+			if err != nil {
+				return nil, err
+			}
+			return &DecodedImage{Static: ebiten.NewImageFromImage(img)}, nil
+		}
+
+		anim := preRenderWebpAnimation(animation)
+		return &DecodedImage{Animated: anim}, nil
 	} else {
 		// For all other image types (jpeg, etc.)
 		img, _, err := image.Decode(bytes.NewReader(data))
