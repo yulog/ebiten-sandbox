@@ -211,7 +211,7 @@ func runTestMode(reactionChan chan<- ReactionInfo) {
 // AnimatedImage holds all the pre-rendered frames for an animation.
 type AnimatedImage struct {
 	Frames      []*ebiten.Image
-	FrameDelays []int // Delay in 1/100s of a second
+	FrameDelays []int // Delay in milliseconds
 }
 
 // DecodedImage holds the result of decoding, which can be static or animated.
@@ -260,8 +260,8 @@ func preRenderApngAnimation(animation *apng.APNG, canvasWidth, canvasHeight int)
 
 		// Convert frame delay and append.
 		delaySeconds := frame.GetDelay() // Returns delay in seconds as float64
-		delayInHundredths := int(math.Round(delaySeconds * 100))
-		frameDelays = append(frameDelays, delayInHundredths)
+		delayInMilliseconds := int(math.Round(delaySeconds * 1000))
+		frameDelays = append(frameDelays, delayInMilliseconds)
 
 		// Handle disposal method to prepare canvas for the *next* frame.
 		switch frame.DisposeOp {
@@ -287,13 +287,7 @@ func preRenderWebpAnimation(animation *webp.WEBP) *AnimatedImage {
 		frames = append(frames, ebiten.NewImageFromImage(frame))
 	}
 
-	// Convert delay from milliseconds to 1/100s of a second.
-	delaysInHundredths := make([]int, len(animation.Delay))
-	for i, d := range animation.Delay {
-		delaysInHundredths[i] = int(math.Round(float64(d) / 10.0))
-	}
-
-	return &AnimatedImage{Frames: frames, FrameDelays: delaysInHundredths}
+	return &AnimatedImage{Frames: frames, FrameDelays: animation.Delay}
 }
 
 // preRenderGifAnimation composites a GIF's frames onto a canvas.
@@ -309,7 +303,12 @@ func preRenderGifAnimation(g *gif.GIF) *AnimatedImage {
 			draw.Draw(canvas, srcImg.Bounds(), image.Transparent, image.Point{}, draw.Src)
 		}
 	}
-	return &AnimatedImage{Frames: frames, FrameDelays: g.Delay}
+	// Convert delay from 1/100s of a second to milliseconds.
+	delaysInMs := make([]int, len(g.Delay))
+	for i, d := range g.Delay {
+		delaysInMs[i] = d * 10
+	}
+	return &AnimatedImage{Frames: frames, FrameDelays: delaysInMs}
 }
 
 // fetchAndDecodeImage downloads and decodes an image. It distinguishes between static
@@ -442,7 +441,7 @@ type ReactionObject struct {
 	image         *ebiten.Image
 	animatedImage *AnimatedImage
 	currentFrame  int
-	frameCounter  int
+	frameTimeAccumulator float64
 	fallbackText  string
 	scale         float64
 }
@@ -557,13 +556,17 @@ func (g *Game) Update() error {
 		o.lifetime--
 
 		if o.animatedImage != nil && len(o.animatedImage.Frames) > 0 {
-			o.frameCounter++
-			delayInTicks := o.animatedImage.FrameDelays[o.currentFrame] * 60 / 100
-			if delayInTicks == 0 {
-				delayInTicks = defaultFrameDelayTicks
+			o.frameTimeAccumulator += 1000.0 / 60.0 // Ebiten runs at 60 TPS
+
+			delayMs := float64(o.animatedImage.FrameDelays[o.currentFrame])
+			if delayMs == 0 {
+				// Use a default delay if the animation doesn't specify one.
+				// defaultFrameDelayTicks is 6, which is 100ms.
+				delayMs = 100.0
 			}
-			if o.frameCounter >= delayInTicks {
-				o.frameCounter = 0
+
+			if o.frameTimeAccumulator >= delayMs {
+				o.frameTimeAccumulator -= delayMs
 				o.currentFrame = (o.currentFrame + 1) % len(o.animatedImage.Frames)
 			}
 		}
