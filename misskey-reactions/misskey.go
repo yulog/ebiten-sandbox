@@ -14,7 +14,17 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// --- Misskey WebSocket/API Communication ---
+// MisskeyClient handles all communication with the Misskey API and WebSocket.
+type MisskeyClient struct {
+	config *Config
+}
+
+// NewMisskeyClient creates a new client for interacting with Misskey.
+func NewMisskeyClient(cfg *Config) *MisskeyClient {
+	return &MisskeyClient{config: cfg}
+}
+
+// MisskeyStreamMessage defines the structure for incoming WebSocket messages.
 type MisskeyStreamMessage struct {
 	Type string `json:"type"`
 	Body struct {
@@ -24,6 +34,7 @@ type MisskeyStreamMessage struct {
 	} `json:"body"`
 }
 
+// NotificationBody is the structure for the body of a reaction notification.
 type NotificationBody struct {
 	Type     string `json:"type"`
 	Reaction string `json:"reaction"`
@@ -32,13 +43,15 @@ type NotificationBody struct {
 	} `json:"note"`
 }
 
+// ReactionInfo holds the name and optional URL of a reaction.
 type ReactionInfo struct {
 	Name string
 	URL  string
 }
 
-func connectToMisskey(cfg *Config, reactionChan chan<- ReactionInfo) {
-	u := url.URL{Scheme: "wss", Host: cfg.MisskeyInstance, Path: "/streaming", RawQuery: "i=" + cfg.AccessToken}
+// Connect establishes a WebSocket connection and listens for reactions.
+func (mc *MisskeyClient) Connect(reactionChan chan<- ReactionInfo) {
+	u := url.URL{Scheme: "wss", Host: mc.config.MisskeyInstance, Path: "/streaming", RawQuery: "i=" + mc.config.AccessToken}
 	log.Printf("Connecting to %s", u.String())
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
@@ -56,7 +69,7 @@ func connectToMisskey(cfg *Config, reactionChan chan<- ReactionInfo) {
 		if err := c.ReadJSON(&msg); err != nil {
 			log.Printf("Read error: %v. Reconnecting...", err)
 			time.Sleep(5 * time.Second)
-			go connectToMisskey(cfg, reactionChan)
+			go mc.Connect(reactionChan) // Reconnect using the method
 			return
 		}
 		if msg.Type == "channel" && msg.Body.Type == "notification" {
@@ -72,16 +85,17 @@ func connectToMisskey(cfg *Config, reactionChan chan<- ReactionInfo) {
 	}
 }
 
-// queryEmojiAPI fetches a custom emoji URL from the instance API.
+// EmojiAPIResponse is the structure for the emoji API response.
 type EmojiAPIResponse struct {
 	URL string `json:"url"`
 }
 
-func queryEmojiAPI(emojiName string) (string, error) {
-	if appConfig == nil {
-		return "", fmt.Errorf("app config not loaded")
+// QueryEmojiAPI fetches a custom emoji URL from the instance API.
+func (mc *MisskeyClient) QueryEmojiAPI(emojiName string) (string, error) {
+	if mc.config == nil {
+		return "", fmt.Errorf("misskey client config not loaded")
 	}
-	apiURL := fmt.Sprintf("https://%s/api/emoji", appConfig.MisskeyInstance)
+	apiURL := fmt.Sprintf("https://%s/api/emoji", mc.config.MisskeyInstance)
 	payload := map[string]string{"name": emojiName}
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
@@ -108,34 +122,4 @@ func queryEmojiAPI(emojiName string) (string, error) {
 	}
 
 	return apiResp.URL, nil
-}
-
-// --- Test Mode ---
-func runTestMode(reactionChan chan<- ReactionInfo) {
-	log.Println("--- RUNNING IN TEST MODE ---")
-	mockData := []ReactionInfo{
-		{Name: "👍"},
-		// {Name: ":ebiten:", URL: "https://ebitengine.org/images/logo.png"},                                                               // Valid custom emoji
-		{Name: ":misskey:", URL: "https://proxy.misskeyusercontent.jp/image/media.misskeyusercontent.jp%2Femoji%2Fmisskey.png?emoji=1"}, // Valid custom emoji
-		{Name: "Go"}, // Standard text, will become a Twemoji
-		{Name: ":error:", URL: "https://example.com/nonexistent-image.png"}, // Invalid custom emoji to test fallback
-		{Name: "❤️"},
-		{Name: ":ai_nomming:", URL: "https://proxy.misskeyusercontent.jp/image/media.misskeyusercontent.jp%2Fmisskey%2Ff6294900-f678-43cc-bc36-3ee5deeca4c2.gif?emoji=1"},
-		{Name: ":meowsurprised:", URL: "https://proxy.misskeyusercontent.jp/image/media.misskeyusercontent.jp%2Femoji%2FmeowSurprised.png?emoji=1"},
-		{Name: ":bug:"},
-		{Name: ":syuilo_yay:"}, // invalid format: chunk out of order
-		{Name: ":ai_akan:"},
-		{Name: ":murakamisan_spin:"},
-		{Name: ":blobdance2:"},
-		{Name: ":resonyance:"},
-	}
-
-	// Loop forever, sending mock data every 2 seconds
-	for {
-		for _, reaction := range mockData {
-			log.Printf("[TEST MODE] Spawning reaction: %s", reaction.Name)
-			reactionChan <- reaction
-			time.Sleep(2 * time.Second)
-		}
-	}
 }

@@ -6,6 +6,8 @@ import (
 	"image"
 	"image/draw"
 	"image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"math"
 	"net/http"
@@ -15,18 +17,36 @@ import (
 	"github.com/gen2brain/webp"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/kettek/apng"
-
-	_ "image/jpeg"
-	_ "image/png"
 )
 
-var (
-	// imageCache can store *ebiten.Image for static images or *AnimatedImage for animations.
-	imageCache = make(map[string]any)
-	cacheMutex = &sync.RWMutex{}
-)
+// ImageManager handles caching and decoding of images.
+type ImageManager struct {
+	cache      map[string]any
+	cacheMutex *sync.RWMutex
+}
 
-// --- Image Handling ---
+// NewImageManager creates a new manager for image assets.
+func NewImageManager() *ImageManager {
+	return &ImageManager{
+		cache:      make(map[string]any),
+		cacheMutex: &sync.RWMutex{},
+	}
+}
+
+// Get retrieves an image (static or animated) from the cache.
+func (im *ImageManager) Get(key string) (any, bool) {
+	im.cacheMutex.RLock()
+	defer im.cacheMutex.RUnlock()
+	item, exists := im.cache[key]
+	return item, exists
+}
+
+// Set adds an image (static or animated) to the cache.
+func (im *ImageManager) Set(key string, value any) {
+	im.cacheMutex.Lock()
+	defer im.cacheMutex.Unlock()
+	im.cache[key] = value
+}
 
 // AnimatedImage holds all the pre-rendered frames for an animation.
 type AnimatedImage struct {

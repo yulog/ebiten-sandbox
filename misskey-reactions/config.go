@@ -6,15 +6,13 @@ import (
 	"os"
 )
 
-// Global config for API calls outside of the main connection loop
-var appConfig *Config
-
-// --- Configuration ---
+// Config holds the application configuration.
 type Config struct {
 	MisskeyInstance string `json:"misskey_instance"`
 	AccessToken     string `json:"access_token"`
 }
 
+// loadConfig reads and parses the config.json file.
 func loadConfig() (*Config, error) {
 	data, err := os.ReadFile("config.json")
 	if err != nil {
@@ -27,6 +25,5 @@ func loadConfig() (*Config, error) {
 	if cfg.MisskeyInstance == "" || cfg.MisskeyInstance == "your.misskey.instance.com" || cfg.AccessToken == "" || cfg.AccessToken == "YOUR_MISSKEY_ACCESS_TOKEN" {
 		return nil, fmt.Errorf("please update config.json")
 	}
-	appConfig = &cfg // Store loaded config globally
 	return &cfg, nil
 }

@@ -26,7 +26,7 @@ var (
 	fallbackFont *text.GoTextFace
 )
 
-// --- Ebitengine Game Loop ---
+// ReactionObject represents a single floating reaction on the screen.
 type ReactionObject struct {
 	x, y, vx, vy         float64
 	lifetime             int
@@ -39,13 +39,21 @@ type ReactionObject struct {
 	scale                float64
 }
 
+// Game holds the main game state and dependencies.
 type Game struct {
-	objects      []*ReactionObject
-	reactionChan <-chan ReactionInfo
+	objects       []*ReactionObject
+	reactionChan  <-chan ReactionInfo
+	misskeyClient *MisskeyClient
+	imageManager  *ImageManager
 }
 
-func NewGame(rc <-chan ReactionInfo) *Game {
-	return &Game{reactionChan: rc}
+// NewGame creates a new game instance with its dependencies.
+func NewGame(rc <-chan ReactionInfo, mc *MisskeyClient, im *ImageManager) *Game {
+	return &Game{
+		reactionChan:  rc,
+		misskeyClient: mc,
+		imageManager:  im,
+	}
 }
 
 func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
@@ -76,15 +84,13 @@ func (g *Game) spawnReaction(reaction ReactionInfo, w, h int) {
 	}
 	g.objects = append(g.objects, obj)
 
-	go loadReactionImage(obj, reaction)
+	go g.loadReactionImage(obj, reaction)
 }
 
 // loadReactionImage handles the asynchronous fetching, decoding, and caching of a reaction image.
-func loadReactionImage(obj *ReactionObject, reaction ReactionInfo) {
+func (g *Game) loadReactionImage(obj *ReactionObject, reaction ReactionInfo) {
 	// Check cache first
-	cacheMutex.RLock()
-	cachedItem, exists := imageCache[reaction.Name]
-	cacheMutex.RUnlock()
+	cachedItem, exists := g.imageManager.Get(reaction.Name)
 	if exists {
 		if staticImg, ok := cachedItem.(*ebiten.Image); ok {
 			obj.image = staticImg
@@ -100,7 +106,7 @@ func loadReactionImage(obj *ReactionObject, reaction ReactionInfo) {
 		if len(reaction.Name) > 2 && reaction.Name[0] == ':' && reaction.Name[len(reaction.Name)-1] == ':' {
 			var err error
 			emojiName := strings.Trim(reaction.Name, ":")
-			urlToFetch, err = queryEmojiAPI(emojiName)
+			urlToFetch, err = g.misskeyClient.QueryEmojiAPI(emojiName) // Use the client
 			if err != nil {
 				log.Printf("Failed to query API for emoji '%s': %v", emojiName, err)
 				obj.fallbackText = emojiName
@@ -122,18 +128,15 @@ func loadReactionImage(obj *ReactionObject, reaction ReactionInfo) {
 	// Update object and cache
 	log.Printf("Successfully fetched image for %s", reaction.Name)
 	if decoded.Animated != nil {
-		cacheMutex.Lock()
-		imageCache[reaction.Name] = decoded.Animated
-		cacheMutex.Unlock()
+		g.imageManager.Set(reaction.Name, decoded.Animated) // Use the manager
 		obj.animatedImage = decoded.Animated
 	} else if decoded.Static != nil {
-		cacheMutex.Lock()
-		imageCache[reaction.Name] = decoded.Static
-		cacheMutex.Unlock()
+		g.imageManager.Set(reaction.Name, decoded.Static) // Use the manager
 		obj.image = decoded.Static
 	}
 }
 
+// Update proceeds the game state.
 func (g *Game) Update() error {
 	w, h := ebiten.WindowSize()
 	select {
@@ -183,6 +186,7 @@ func (g *Game) Update() error {
 	return nil
 }
 
+// Draw draws the game screen.
 func (g *Game) Draw(screen *ebiten.Image) {
 	for _, o := range g.objects {
 		var imgToDraw *ebiten.Image
@@ -214,6 +218,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 }
 
+// Layout takes the outside size (e.g., the window size) and returns the (logical) screen size.
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	s := ebiten.Monitor().DeviceScaleFactor()
 	return int(float64(outsideWidth) * s), int(float64(outsideHeight) * s)
