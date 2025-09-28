@@ -14,10 +14,20 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// MisskeyAPI defines the interface for interacting with Misskey.
+// This allows for mocking in tests.
+type MisskeyAPI interface {
+	Connect(reactionChan chan<- ReactionInfo)
+	QueryEmojiAPI(emojiName string) (string, error)
+}
+
 // MisskeyClient handles all communication with the Misskey API and WebSocket.
 type MisskeyClient struct {
 	config *Config
 }
+
+// Statically check that *MisskeyClient implements MisskeyAPI.
+var _ MisskeyAPI = (*MisskeyClient)(nil)
 
 // NewMisskeyClient creates a new client for interacting with Misskey.
 func NewMisskeyClient(cfg *Config) *MisskeyClient {

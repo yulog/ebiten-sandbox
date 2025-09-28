@@ -43,12 +43,12 @@ type ReactionObject struct {
 type Game struct {
 	objects       []*ReactionObject
 	reactionChan  <-chan ReactionInfo
-	misskeyClient *MisskeyClient
+	misskeyClient MisskeyAPI
 	imageManager  *ImageManager
 }
 
 // NewGame creates a new game instance with its dependencies.
-func NewGame(rc <-chan ReactionInfo, mc *MisskeyClient, im *ImageManager) *Game {
+func NewGame(rc <-chan ReactionInfo, mc MisskeyAPI, im *ImageManager) *Game {
 	return &Game{
 		reactionChan:  rc,
 		misskeyClient: mc,
