@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/draw"
@@ -203,6 +204,68 @@ func preRenderGifAnimation(g *gif.GIF) *AnimatedImage {
 	return &AnimatedImage{Frames: frames, FrameDelays: delaysInMs}
 }
 
+// stripTRNSFromRGBA reads a PNG stream and removes the tRNS chunk if the color
+// type is RGBA (6), as this is disallowed by the PNG specification.
+func stripTRNSFromRGBA(r io.Reader) (io.Reader, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check for PNG signature
+	if len(data) < 8 || string(data[:8]) != "\x89PNG\r\n\x1a\n" {
+		return bytes.NewReader(data), nil // Not a PNG or too short, return as is
+	}
+
+	var dest bytes.Buffer
+	dest.Write(data[:8]) // Write signature
+
+	isRGBA := false
+	offset := 8
+
+	for offset < len(data) {
+		if offset+8 > len(data) {
+			return nil, fmt.Errorf("invalid chunk header at offset %d", offset)
+		}
+
+		length := binary.BigEndian.Uint32(data[offset : offset+4])
+		chunkType := string(data[offset+4 : offset+8])
+
+		chunkEnd := offset + 8 + int(length) + 4 // 8 for header, 4 for CRC
+		if chunkEnd > len(data) {
+			return nil, fmt.Errorf("chunk %s exceeds data length", chunkType)
+		}
+
+		chunk := data[offset:chunkEnd]
+
+		if chunkType == "IHDR" {
+			if length == 13 {
+				colorType := data[offset+8+9] // Color type is the 10th byte in the IHDR data
+				if colorType == 6 {           // 6 is Truecolour with alpha (RGBA)
+					isRGBA = true
+				}
+			}
+			dest.Write(chunk)
+		} else if chunkType == "tRNS" && isRGBA {
+			// Skip this chunk
+		} else {
+			dest.Write(chunk)
+		}
+
+		offset = chunkEnd
+
+		if chunkType == "IEND" {
+			// Copy remaining data if any (though there shouldn't be any after IEND)
+			if offset < len(data) {
+				dest.Write(data[offset:])
+			}
+			break
+		}
+	}
+
+	return &dest, nil
+}
+
 // fetchAndDecodeImage downloads and decodes an image. It distinguishes between static
 // and animated images to process them more efficiently.
 func fetchAndDecodeImage(url string) (*DecodedImage, error) {
@@ -241,10 +304,19 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 		return &DecodedImage{Animated: anim}, nil
 
 	} else if strings.Contains(contentType, "png") {
+		// For PNG/APNG, first clean the data by stripping invalid tRNS chunks.
+		processedData := data
+		cleanReader, err := stripTRNSFromRGBA(bytes.NewReader(data))
+		if err != nil {
+			log.Printf("Failed to process stream for tRNS stripping: %v", err)
+		} else {
+			processedData, _ = io.ReadAll(cleanReader)
+		}
+
 		// To properly handle APNG, we need to decode it fully first.
 		// We need two readers because we first read config, then the whole animation.
-		reader1 := bytes.NewReader(data)
-		reader2 := bytes.NewReader(data)
+		reader1 := bytes.NewReader(processedData)
+		reader2 := bytes.NewReader(processedData)
 
 		config, err := apng.DecodeConfig(reader1)
 		if err != nil {
@@ -256,7 +328,7 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 		if err != nil {
 			// If DecodeAll fails, it might be a simple static PNG that DecodeAll doesn't handle.
 			// Fallback to the standard image/png decoder.
-			img, _, staticErr := image.Decode(bytes.NewReader(data))
+			img, _, staticErr := image.Decode(bytes.NewReader(processedData))
 			if staticErr != nil {
 				return nil, err // Return original apng error
 			}
@@ -273,7 +345,7 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 
 		if numFrames <= 1 {
 			// If there's only one frame (or none), treat it as a static image.
-			img, _, err := image.Decode(bytes.NewReader(data))
+			img, _, err := image.Decode(bytes.NewReader(processedData))
 			if err != nil {
 				return nil, err
 			}
@@ -283,7 +355,6 @@ func fetchAndDecodeImage(url string) (*DecodedImage, error) {
 		// It's an animation, so pre-render the frames.
 		anim := preRenderApngAnimation(&animation, config.Width, config.Height)
 		return &DecodedImage{Animated: anim}, nil
-
 	} else if strings.Contains(contentType, "webp") {
 		animation, err := webp.DecodeAll(bytes.NewReader(data))
 		if err != nil {
