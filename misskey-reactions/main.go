@@ -81,7 +81,7 @@ func main() {
 
 	// Initialize dependencies
 	misskeyClient := NewMisskeyClient(cfg) // cfg can be nil in test mode, which is fine
-	imageManager := NewImageManager()
+	imageManager := NewImageManager(misskeyClient)
 
 	if !*testMode {
 		go misskeyClient.Connect(reactionChan)
@@ -96,7 +96,7 @@ func main() {
 	ebiten.SetWindowSize(int(float64(screenWidth)*s), int(float64(screenHeight)*s)-1)
 
 	// Inject dependencies into the game
-	game := NewGame(reactionChan, misskeyClient, imageManager)
+	game := NewGame(reactionChan, imageManager)
 
 	opts := ebiten.RunGameOptions{ScreenTransparent: true}
 	if err := ebiten.RunGameWithOptions(game, &opts); err != nil {

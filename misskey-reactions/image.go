@@ -9,6 +9,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"strings"
@@ -21,15 +22,66 @@ import (
 
 // ImageManager handles caching and decoding of images.
 type ImageManager struct {
-	cache      map[string]any
-	cacheMutex *sync.RWMutex
+	cache         map[string]any
+	cacheMutex    *sync.RWMutex
+	misskeyClient MisskeyAPI
 }
 
 // NewImageManager creates a new manager for image assets.
-func NewImageManager() *ImageManager {
+func NewImageManager(mc MisskeyAPI) *ImageManager {
 	return &ImageManager{
-		cache:      make(map[string]any),
-		cacheMutex: &sync.RWMutex{},
+		cache:         make(map[string]any),
+		cacheMutex:    &sync.RWMutex{},
+		misskeyClient: mc,
+	}
+}
+
+// LoadImageForObject handles the asynchronous fetching, decoding, and caching of a reaction image.
+func (im *ImageManager) LoadImageForObject(obj *ReactionObject, reaction ReactionInfo) {
+	// Check cache first
+	cachedItem, exists := im.Get(reaction.Name)
+	if exists {
+		if staticImg, ok := cachedItem.(*ebiten.Image); ok {
+			obj.image = staticImg
+		} else if anim, ok := cachedItem.(*AnimatedImage); ok {
+			obj.animatedImage = anim
+		}
+		return
+	}
+
+	// Determine URL to fetch
+	urlToFetch := reaction.URL
+	if urlToFetch == "" {
+		if len(reaction.Name) > 2 && reaction.Name[0] == ':' && reaction.Name[len(reaction.Name)-1] == ':' {
+			var err error
+			emojiName := strings.Trim(reaction.Name, ":")
+			urlToFetch, err = im.misskeyClient.QueryEmojiAPI(emojiName) // Use the client
+			if err != nil {
+				log.Printf("Failed to query API for emoji '%s': %v", emojiName, err)
+				obj.fallbackText = emojiName
+				return
+			}
+		} else {
+			urlToFetch = emojiToTwemojiURL(reaction.Name)
+		}
+	}
+
+	// Fetch and decode the image
+	decoded, err := fetchAndDecodeImage(urlToFetch)
+	if err != nil {
+		log.Printf("Failed to fetch image for %s: %v. Using fallback text.", reaction.Name, err)
+		obj.fallbackText = strings.Trim(reaction.Name, ":")
+		return
+	}
+
+	// Update object and cache
+	log.Printf("Successfully fetched image for %s", reaction.Name)
+	if decoded.Animated != nil {
+		im.Set(reaction.Name, decoded.Animated) // Use the manager
+		obj.animatedImage = decoded.Animated
+	} else if decoded.Static != nil {
+		im.Set(reaction.Name, decoded.Static) // Use the manager
+		obj.image = decoded.Static
 	}
 }
 
